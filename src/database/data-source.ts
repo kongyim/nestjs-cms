@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { DataSource } from "typeorm";
 import { config } from "../config";
-import { resources } from "../../resources";
+import { resources } from "../resource/resource.loader";
 import { createEntity } from "../resource/resource.registry";
 import { AttachmentEntity } from "../storage/attachment.entity";
 import { join } from "node:path";

@@ -4,8 +4,11 @@
 
 1. 喺 `resources/` 建立檔案。
 2. export Zod `schema` 及 `defineResource(...)`。
-3. 喺 `resources/index.ts` import 並加入 `resources`。
-4. Development 重啟；production 產生、review 並執行 migration。
+3. 重啟 development server，自動載入新 resource；唔需要 index 或手動註冊。
+
+Loader 啟動時按檔名排序掃描 `resources/` 第一層：development 載入 `.ts`，compiled production 載入 `dist/resources/` 嘅 `.js`。每個 resource file 必須 default export `defineResource(...)`；helper files 用 `_` 開頭（例如 `_hooks.ts`、`_schema.ts`）。隱藏檔、declaration files、`.spec` / `.test` files 同子目錄會略過。無效 export 或重複 resource name 會令啟動失敗並指出檔案。
+
+載入係 startup discovery，唔係每個 request 重新掃描；新增／移除檔案後需重啟 server。Production 需重新 build/deploy，並產生、review 及執行必要 database migration。`npm run build` 會先清理 `dist`，避免已刪除 resource 嘅舊 `.js` 被重新載入。Development 啟用 `DB_SYNCHRONIZE=true` 時，只加一個 resource file 即可自動建表同註冊 API。
 
 唔需要另外寫 controller/service。資料庫欄位需明確定義：Zod 負責 API input contract；TypeORM columns 負責 SQL storage、indexes、unique constraints。兩者分開，避免由 Zod refinements 猜測 database constraints。
 

@@ -108,8 +108,8 @@ it("requires API key and exposes schema discovery", async () => {
   await api().get("/api/_resources").expect(401);
   const res = await api().get("/api/_resources").set(auth).expect(200);
   expect(res.body.map((r: { name: string }) => r.name)).toEqual([
-    "categories",
     "articles",
+    "categories",
   ]);
 });
 it("creates records with defaults, validates payloads and maps unique conflicts", async () => {

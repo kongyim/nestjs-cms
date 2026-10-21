@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { EntitySchema } from "typeorm";
 import { z } from "zod";
-import { resources } from "../../resources";
+import { resources } from "./resource.loader";
 import { ResourceDefinition } from "./resource.types";
 export function createEntity(def: ResourceDefinition) {
   return new EntitySchema({
