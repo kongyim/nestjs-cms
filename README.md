@@ -11,10 +11,12 @@ Requires Node.js 22+, npm, and a PostgreSQL database. The package supports NestJ
 ```sh
 npx @nestjs/cli@11 new my-cms --package-manager npm
 cd my-cms
-npm install nestjs-cms
+npm install git+ssh://git@github.com/kongyim/nestjs-cms.git
 ```
 
-**Publication status:** this version has not been published to npm yet. The install-by-name command above is the intended workflow after publication; it should not be used to fetch an unrelated package. Until then, [install a locally packed release](#install-a-local-package) with `npm install /path/to/nestjs-cms-0.1.0.tgz` instead. No source folders need to be copied.
+Install directly from GitHub until this package is published to npm. This command requires Git and a GitHub SSH key with access to the repository. Imports still use `"nestjs-cms"`.
+
+The package's `prepare` script compiles the TypeScript during installation, so generated files do not need to be committed. Keep npm lifecycle scripts enabled. See [npm's Git installation documentation](https://docs.npmjs.com/cli/v11/commands/npm-install/#description). To install a specific revision, append `#<tag-or-commit>` to the Git URL, replacing the placeholder with an existing tag or commit.
 
 The package includes Zod, TypeORM, PostgreSQL/MySQL drivers, dotenv, and the S3 client. The NestJS project supplies the NestJS runtime dependencies.
 
@@ -137,13 +139,27 @@ npm ci
 npm pack
 ```
 
-This builds `nestjs-cms-0.1.0.tgz`, including JavaScript and TypeScript declarations. In the new NestJS project, replace the install-by-name step with:
+This builds `nestjs-cms-0.1.0.tgz`, including JavaScript and TypeScript declarations. In the new NestJS project, replace the GitHub installation step with:
 
 ```sh
 npm install /absolute/path/to/nestjs-cms-0.1.0.tgz
 ```
 
 The package excludes the demo application, demo resources, demo migrations, tests, and local secrets. Packing does not publish anything to a registry.
+
+### Troubleshooting: Cannot find module `nestjs-cms`
+
+Check whether `node_modules/nestjs-cms/dist/src/index.js` and `index.d.ts` exist. Older Git revisions without the `prepare` script may install without these compiled files. The build fix must be committed and pushed before GitHub installations can use it.
+
+After the fix is available on GitHub, stop the development server and reinstall:
+
+```sh
+npm uninstall nestjs-cms
+npm install git+ssh://git@github.com/kongyim/nestjs-cms.git --foreground-scripts
+npm run start:dev
+```
+
+Keep lifecycle scripts enabled and check the installation output for build errors. To use an unpushed local fix, install a locally packed package as described above.
 
 ## Documentation
 

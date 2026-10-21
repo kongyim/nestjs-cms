@@ -18,7 +18,7 @@
     "storage:cleanup": "ts-node scripts/cleanup.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "prepack": "npm run build",
+    "prepare": "npm run build",
     "pack:local": "npm pack"
   },
   "dependencies": {
