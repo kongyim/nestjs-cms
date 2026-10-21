@@ -151,7 +151,7 @@ it("patches without resetting defaults and provides filtering, stable sorting an
     .get("/api/articles")
     .set(auth)
     .query({
-      query: JSON.stringify({ slug: prefix, title: { contains: "100%_" } }),
+      query: JSON.stringify({ slug: prefix, title: { $contains: "100%_" } }),
       sort: "title:asc",
       limit: 1,
     })
@@ -171,6 +171,61 @@ it("patches without resetting defaults and provides filtering, stable sorting an
   await api().get("/api/articles/not-a-uuid").set(auth).expect(400);
   await api().get("/api/no_such_resource").set(auth).expect(404);
   await api().get(`/api/articles/${randomUUID()}`).set(auth).expect(404);
+});
+it("supports dollar operators and SQL substring positions without exposing SQL", async () => {
+  const match = async (filter: unknown, total: number) => {
+    const result = await api()
+      .get("/api/articles")
+      .set(auth)
+      .query({
+        query: JSON.stringify({ slug: { $eq: prefix }, ...(filter as object) }),
+      })
+      .expect(200);
+    expect(result.body.meta.total).toBe(total);
+  };
+  await match({ status: { $in: ["published", "archived"] } }, 1);
+  await match(
+    {
+      title: {
+        $gt: "A",
+        $gte: "Changed 100%_value",
+        $lt: "Z",
+        $lte: "Changed 100%_value",
+      },
+    },
+    1,
+  );
+  await match({ title: { $locate: "100%_" } }, 1);
+  await match({ title: { $locate: { search: "100%_" } } }, 1);
+  await match({ title: { $locate: { search: "100%_", $eq: 9 } } }, 1);
+  await match(
+    {
+      title: {
+        $locate: { search: "100%_", $gt: 8, $gte: 9, $lt: 10, $lte: 9 },
+      },
+    },
+    1,
+  );
+  await match({ title: { $locate: { search: "missing", $eq: 0 } } }, 1);
+  await match({ title: { $locate: "missing" } }, 0);
+  await match({ title: { $locate: { search: "missing" } } }, 0);
+  await match({ title: { $locate: { search: "missing", $lte: 0 } } }, 1);
+  await match({ title: { $locate: "' OR 1=1 --" } }, 0);
+  await match({ categoryId: { $eq: null } }, 0);
+  for (const title of [
+    { contains: "100" },
+    { $contians: "100" },
+    { $locate: { search: "100", $eq: -1 } },
+    { $locate: { search: "100", $eq: 1.5 } },
+    { $locate: { search: "" } },
+    { $locate: "" },
+  ]) {
+    await api()
+      .get("/api/articles")
+      .set(auth)
+      .query({ query: JSON.stringify({ title }) })
+      .expect(400);
+  }
 });
 it("runs hooks sequentially and rolls back database changes when an after hook fails", async () => {
   const def = app.get(ResourceRegistry).get("articles");

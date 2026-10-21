@@ -31,14 +31,32 @@ Create/get/update 回傳 record 本身：
 
 List 回傳 `{ data: [...], meta: { page, limit, total, totalPages } }`。預設 `page=1&limit=25`；limit 1–150；page 1–100000；唔接受 `limit=all`。無結果時 `totalPages=0`。同時有寫入時 count 同 data 可能輕微不同，並非 snapshot pagination。
 
-`query` 係 URL-encoded JSON object。各欄位／operator 之間 AND，`in` 內部 OR。只接受 definition 嘅 filterable 欄位同 `id`。目前提供 `eq`、`in`、`contains`、`gt`、`gte`、`lt`、`lte`；唔支援 nested relation、arbitrary SQL、OR tree。`eq: null` 對應 SQL IS NULL。`contains` 係 literal substring（會 escape `%` / `_`），大小寫跟 database collation；只用於 string 欄位。數字比較／日期比較需使用對應欄位類型。
+`query` 係 URL-encoded JSON object。各欄位／operator 之間 AND，`$in` 內部 OR。只接受 definition 嘅 filterable 欄位同 `id`。Operators 統一用 `$` 前綴：`$eq`、`$in`、`$contains`、`$gt`、`$gte`、`$lt`、`$lte`、`$locate`；唔支援 nested relation、arbitrary SQL、OR tree。`$eq: null` 對應 SQL IS NULL。`$contains` 係 literal substring（會 escape `%` / `_`），大小寫跟 database collation；只用於 string 欄位。數字比較／日期比較需使用對應欄位類型。
+
+直接值仍然係 equality shorthand，例如 `{ "status": "published" }` 等同 `{ "status": { "$eq": "published" } }`。舊 unprefixed operators（例如 `{ "title": { "contains": "Nest" } }`）會回 400；正確拼法係 `$contains`，唔接受 `$contians`。真實欄位名稱如 `eq` / `in` 可照常出現在最外層，只需列入 resource filterable allowlist。
 
 ```sh
 curl -G http://localhost:3000/api/articles \
-  --data-urlencode 'query={"status":"published","title":{"contains":"Nest"}}' \
+  --data-urlencode 'query={"status":"published","title":{"$contains":"Nest"}}' \
   --data-urlencode 'sort=createdAt:desc' \
   --data-urlencode 'page=1' --data-urlencode 'limit=25'
 ```
+
+### `$locate`：搜尋第一次出現嘅位置
+
+只支援 string 欄位。`{ "title": { "$locate": { "search": "Nest" } } }` 同簡寫 `{ "title": { "$locate": "Nest" } }` 都會選出有出現 `Nest` 嘅 records（預設位置 `$gt: 0`）。進階格式用 `search` 指定文字，再用 `$eq` / `$gt` / `$gte` / `$lt` / `$lte` 比較位置；多個 comparisons 之間 AND。
+
+```json
+{
+  "title": {
+    "$locate": { "search": "Nest", "$eq": 1 }
+  }
+}
+```
+
+以上選出 `Nest` 第一次出現位置係 1 嘅 records。位置由 1 開始，搵唔到係 0；`$eq: 0` 表示無出現，`$gte: 5` 表示第一次出現喺第 5 個字元或之後。呢個係 filter，唔會額外回傳 position 欄位。Null 欄位嘅結果係 SQL NULL，唔會當成 0；如要篩選 null，使用欄位 `$eq: null`。
+
+`search` 必須係非空字串；position comparisons 可省略，預設匹配任何搵到嘅位置。有提供 `$eq` / `$gt` / `$gte` / `$lt` / `$lte` 時，只套用指定條件，唔會額外加 `$gt: 0`；比較值必須係非負整數。`%` / `_` 係普通字元，唔係 wildcard，search 同位置全部 parameterized。PostgreSQL 使用 [STRPOS](https://www.postgresql.org/docs/17/functions-string.html)，MySQL 使用 [LOCATE](https://dev.mysql.com/doc/refman/8.4/en/string-functions.html#function_locate)；大小寫／collation 行為跟 database，唔保證兩邊一致。
 
 `sort=field:asc` 或 `field:desc`；預設 createdAt:desc。只允許 sortable 欄位、id 同 createdAt，另以 id 穩定排序。Delete 回 `{ id, deleted: true }`；刪除不存在 record 回 404。
 
