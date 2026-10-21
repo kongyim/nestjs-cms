@@ -3,9 +3,9 @@ import { extname, join } from "node:path";
 import { z } from "zod";
 import type { ResourceDefinition } from "./resource.types";
 
-// __dirname resolves to src/resource in development and dist/src/resource after build.
+// The consuming application chooses the resource directory.
 export function loadResources(
-  directory = join(__dirname, "../../resources"),
+  directory: string,
   extension = extname(__filename),
 ): ResourceDefinition[] {
   const files = readdirSync(directory, { withFileTypes: true })
@@ -49,6 +49,3 @@ export function loadResources(
     return definition;
   });
 }
-
-// Database registration and API discovery share one startup snapshot.
-export const resources = loadResources();

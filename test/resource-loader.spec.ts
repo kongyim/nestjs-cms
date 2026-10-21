@@ -18,10 +18,9 @@ exports.default = { name: ${JSON.stringify(name)}, schema: z.object({ title: z.s
   );
 }
 it("discovers source resources without an index", () => {
-  expect(loadResources().map((r) => r.name)).toEqual([
-    "articles",
-    "categories",
-  ]);
+  expect(
+    loadResources(join(__dirname, "../resources")).map((r) => r.name),
+  ).toEqual(["articles", "categories"]);
 });
 it("picks up a newly added file, sorts definitions and stops loading removed files", () => {
   resource("zebra.js", "zebras");

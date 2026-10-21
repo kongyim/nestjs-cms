@@ -1,20 +1,19 @@
 # Resource definitions
 
-## 新增 resource
+## Add a resource
 
-1. 喺 `resources/` 建立檔案。
-2. export Zod `schema` 及 `defineResource(...)`。
-3. 重啟 development server，自動載入新 resource；唔需要 index 或手動註冊。
+1. Create a file in your application's `src/resources/` folder (or the directory configured with `resourcesPath`).
+2. Define a Zod schema and default-export `defineResource(...)` with that schema.
+3. Restart the development server. No index file or manual registration is needed.
 
-Loader 啟動時按檔名排序掃描 `resources/` 第一層：development 載入 `.ts`，compiled production 載入 `dist/resources/` 嘅 `.js`。每個 resource file 必須 default export `defineResource(...)`；helper files 用 `_` 開頭（例如 `_hooks.ts`、`_schema.ts`）。隱藏檔、declaration files、`.spec` / `.test` files 同子目錄會略過。無效 export 或重複 resource name 會令啟動失敗並指出檔案。
+At startup, `ResourceModule.forRoot({ resourcesPath })` scans the first level of the configured directory in filename order. A standard NestJS application compiles `src/resources/*.ts` to `dist/resources/*.js`, which are loaded in both `start:dev` and production. For a ts-node application, set `extension: ".ts"` explicitly. The library never scans its own demo resources when installed as a dependency. Prefix helper files with `_`, such as `_hooks.ts` or `_schema.ts`. Hidden files, declaration files, `.spec` / `.test` files, and subdirectories are ignored. Invalid exports or duplicate resource names stop startup and identify the failing file.
 
-載入係 startup discovery，唔係每個 request 重新掃描；新增／移除檔案後需重啟 server。Production 需重新 build/deploy，並產生、review 及執行必要 database migration。`npm run build` 會先清理 `dist`，避免已刪除 resource 嘅舊 `.js` 被重新載入。Development 啟用 `DB_SYNCHRONIZE=true` 時，只加一個 resource file 即可自動建表同註冊 API。
+Discovery runs at startup, not on each request. Restart after adding or removing files. Production requires a new build/deployment and any necessary database migrations. Keep the host build configured to clear its output directory (the standard Nest CLI uses `deleteOutDir: true`) so removed resources cannot be loaded from stale JavaScript files. With `DB_SYNCHRONIZE=true` in development, adding one resource file creates its table and registers its API.
 
-唔需要另外寫 controller/service。資料庫欄位需明確定義：Zod 負責 API input contract；TypeORM columns 負責 SQL storage、indexes、unique constraints。兩者分開，避免由 Zod refinements 猜測 database constraints。
+No additional controller or service is required. Define database columns explicitly: Zod controls the input contract, while TypeORM controls SQL storage and database constraints. Database constraints are not inferred from Zod refinements.
 
 ```ts
-import { z } from "zod";
-import { defineResource } from "../src/resource/resource.types";
+import { defineResource, z } from "nestjs-cms";
 
 export const schema = z
   .object({
@@ -48,35 +47,39 @@ export default defineResource({
 });
 ```
 
-Resource name 使用小寫英文字母開頭，之後可包含數字／底線，亦用作 table name。框架加入 UUID string `id`、`createdAt`、`updatedAt`；呢啲欄位同 `attachments` 不可由 schema/columns 重定義或 client 寫入。所有正常 payload 欄位應同 columns 對應；nested object/arrays 用 `type: 'json'`。SQL type 要同時支援兩個 database，避免 postgres-only `jsonb`、array、enum 等。UUID 儲存為 varchar(36)。
+Resource names start with a lowercase letter and may contain lowercase letters, digits, and underscores. They also name the database table. The framework adds a UUID string `id`, `createdAt`, and `updatedAt`. These fields and `attachments` are reserved: do not redefine them in the schema/columns or send them in write requests.
 
-Single attachments 用 `{ field, mimeTypes }`；multiple 加 `multiple: true`。Attachment 欄位唔放入 schema/columns，獨立保存 metadata；回應喺 `attachments[field]` 顯示 object/null 或 array。API payload 不接受 object key、bucket、attachment metadata。
+Normal payload fields should correspond to columns. Use `type: "json"` for nested objects and arrays. For compatibility with both databases, choose shared column types rather than database-specific types such as PostgreSQL `jsonb` or native arrays. UUIDs are stored as `varchar(36)`.
 
-`foreignKeys` 可宣告跨 resource 外鍵，參考 `articles.ts`。核心唔會自動 expand relations。`categoryId` 由 hook 預先驗證，再由 database foreign key 保證並發安全；使用中 category 不可刪除。
+Single attachment fields use `{ field, mimeTypes }`; add `multiple: true` for collections. Do not put attachment fields in the Zod schema or database columns: their metadata is stored separately. Responses expose `attachments[field]` as an object/null or an array. Resource write payloads do not accept attachment metadata, object keys, or bucket names.
 
-## 驗證與 update
+Use `foreignKeys` for relationships between resources; see `resources/articles.ts`. Relations are not automatically expanded. The article hook checks `categoryId` before writing, and the database foreign key enforces referential integrity under concurrency. Categories referenced by articles cannot be deleted.
 
-Create 先執行 Zod（包括 defaults），之後 before hooks，再以完整 schema 驗證結果後寫 DB。Unknown fields 回 400，唔會偷偷存入 database。
+## Validation and updates
 
-PUT/PATCH 都係 **partial update**（配合原有 admin portal 風格）：省略欄位保留舊值，null 只接受 nullable 欄位。Nested JSON 整個欄位取代，唔會 deep merge。預設以 `schema.partial()` 驗證 patch，只取 client 真正提供嘅 keys，避免 Zod defaults 重設 omitted fields；合併 existing record 後再完整驗證。
+Create requests run through Zod, including defaults, then before hooks. The hook result is validated against the full schema before writing. Unknown input fields return 400.
 
-如 schema 有 object-level refinements，Zod 可能唔允許 `.partial()`；請明確提供 `updateSchema`（例如冇 defaults 嘅 partial object），合併後仍會以完整 schema 驗證。需要供 discovery 使用嘅 schema 請使用可轉 JSON Schema 嘅 Zod types；複雜 transforms 可移到 hooks。Client-side JSON Schema 唔能代替 server-side refinements。
+Both PUT and PATCH perform **partial updates**: omitted fields retain their values; null is accepted only for nullable fields. Nested JSON fields are replaced as a whole, not deep-merged. The default patch schema is `schema.partial()`. Only keys actually sent by the client are applied, preventing defaults from resetting omitted fields. The merged record is then validated against the full schema.
+
+Schemas with object-level refinements may not support `.partial()`. Supply an explicit `updateSchema`, such as a partial object without defaults, in that case. The merged record still passes through the complete schema. For resource discovery, use Zod types that can be converted to JSON Schema; move complex transformations into hooks where appropriate. Client-side JSON Schema does not replace server-side refinements.
 
 ## Hooks
 
-| Hook           | 時機                 | record                                 |
-| -------------- | -------------------- | -------------------------------------- |
-| onBeforeCreate | insert 前            | validated input + defaults             |
-| onAfterCreate  | insert 後、commit 前 | persisted record                       |
-| onBeforeUpdate | update 前            | existing + patch，完整 validated input |
-| onAfterUpdate  | update 後、commit 前 | persisted record                       |
-| onBeforeDelete | delete 前            | persisted record                       |
-| onAfterDelete  | delete 後、commit 前 | 刪除前 record                          |
+| Hook           | Timing                      | `record`                                    |
+| -------------- | --------------------------- | ------------------------------------------- |
+| onBeforeCreate | Before insert               | Validated input and defaults                |
+| onAfterCreate  | After insert, before commit | Persisted record                            |
+| onBeforeUpdate | Before update               | Existing values plus patch, fully validated |
+| onAfterUpdate  | After update, before commit | Persisted record                            |
+| onBeforeDelete | Before delete               | Persisted record                            |
+| onAfterDelete  | After delete, before commit | Record as it existed before deletion        |
 
-每個 hook 收到 `{ manager, resource, action, id, record, previous }`。`previous` 喺 update/delete 提供。Hooks 按 array 次序執行；before hook 可 mutate `record`，或者 return **完整 replacement record**。Before create/update 結果必須符合 schema。After hooks return value 唔會再寫入；如需寫其他 table，使用傳入嘅 `manager`。
+Each hook receives `{ manager, resource, action, id, record, previous }`. Update/delete hooks also receive `previous`. Hooks run in array order. Before hooks can mutate `record` or return a **complete replacement record**. Before-create/update results must conform to the schema. Return values from after hooks are not written back; use the supplied manager for additional database writes.
 
 ```ts
-const hook = async ({ manager, record, id }) => {
+import type { ResourceHook } from "nestjs-cms";
+
+const hook: ResourceHook = async ({ manager, record, id }) => {
   await manager.getRepository("audit_logs").insert({
     resourceId: id,
     title: record.title,
@@ -84,31 +87,33 @@ const hook = async ({ manager, record, id }) => {
 };
 ```
 
-上述 `audit_logs` 需自行定義 table。所有 hook DB 操作必須用 context manager；唔好使用 global repository，否則操作唔屬於同一 transaction。任一 hook 拋錯，CRUD 同 manager 寫入都 rollback。Update/delete 鎖住 parent record；同一 record 嘅 attachment mutation 亦用相同鎖。After hooks 係 **after write, before commit**，唔係 after commit；email、webhook 等不可 rollback 外部動作應使用 transactional outbox，唔好直接喺 hook 發送。
+This example requires you to define the `audit_logs` table. All hook database operations must use the context manager. Global repositories do not participate in the same transaction. If any hook throws, the CRUD operation and writes through that manager roll back.
 
-Attachment upload/download/remove 不會觸發 CRUD hooks，也不會更新 parent `updatedAt`。Attachment storage 操作使用獨立 service，metadata transaction 同 S3 並非跨系統 atomic transaction，失敗時保留 pending/deleted rows 俾 cleanup 重試。
+Update/delete operations lock the parent record. Attachment mutations use the same parent lock. After hooks run **after the write but before commit**, not after commit. Use a transactional outbox for email, webhooks, and other external effects that cannot be rolled back.
 
-## 舊 project 對照
+Attachment upload/download/remove operations do not trigger CRUD hooks or update the parent's `updatedAt`. SQL metadata and S3 writes are not a distributed atomic transaction. Pending/deleted rows are retained for cleanup retries when needed.
 
-| 舊設定／行為                            | 本版本                                           |
-| --------------------------------------- | ------------------------------------------------ |
-| default config + named schema           | `defineResource({ schema, columns, ... })`       |
-| Prisma `delegate`                       | TypeORM resource table/entity，同時支援 PG/MySQL |
-| `prisma` hook context                   | transactional `manager`                          |
-| `onBeforeCreate` 等六個 hooks           | 保留命名及順序；after hook 在 commit 前          |
-| filesystem attachment、multipart upload | multipart API upload + API streaming download    |
-| `fields[].attachment/attachments`       | `attachments: [{ field, multiple, mimeTypes }]`  |
-| 平面 `nameEn/nameTc/nameSc` mapping     | JSON `name: { en, tc, sc }`                      |
-| arbitrary ORM query、limit=all          | allowlisted filters、最多 150 items/page         |
-| numeric/custom IDs                      | UUID string IDs                                  |
-| rights、publicList                      | 暫不處理；所有 API 共用 optional API key         |
-| products/orders 特例                    | 不移植；按新業務寫 resource hooks                |
+## Comparison with the original project
 
-唔支援舊 config 直接貼入無修改；呢個係獨立 resource framework。既有資料遷移亦唔喺本次範圍。
+| Original configuration or behavior     | This package                                                      |
+| -------------------------------------- | ----------------------------------------------------------------- |
+| Default config and named schema export | `defineResource({ schema, columns, ... })`                        |
+| Prisma `delegate`                      | TypeORM resource table/entity for PostgreSQL and MySQL            |
+| `prisma` hook context                  | Transactional `manager`                                           |
+| Six lifecycle hooks                    | Same names and order; after hooks run before commit               |
+| Filesystem attachment storage          | Multipart API uploads and streamed downloads backed by S3         |
+| `fields[].attachment/attachments`      | `attachments: [{ field, multiple, mimeTypes }]`                   |
+| Flat `nameEn/nameTc/nameSc` mappings   | JSON `name: { en, tc, sc }`                                       |
+| Arbitrary ORM queries and `limit=all`  | Allowlisted filters and at most 150 items per page                |
+| Numeric/custom IDs                     | UUID string IDs                                                   |
+| Rights and `publicList`                | Not implemented; an optional shared API key applies to all routes |
+| Product/order-specific core logic      | Business rules belong in resource hooks                           |
+
+Existing configurations require adaptation; this is an independent resource framework. Migration of existing business data is outside the current scope.
 
 ## Service attachment API
 
-Controller 同其他業務 service 統一透過 `ResourceService` 管理附件：
+Controllers and business services manage attachments through `ResourceService`:
 
 ```ts
 await resources.createAttachment(resource, recordId, field, {
@@ -131,6 +136,16 @@ const { attachment, stream } = await resources.downloadAttachment(
 await resources.removeAttachment(resource, recordId, field, attachmentId);
 ```
 
-`createAttachment` / `findAttachment` 回傳 `{ id, name, mimeType, size, createdAt }`；`findAttachment` 只讀 metadata，唔會存取 S3。`downloadAttachment` 回傳相同 metadata 加 Node readable stream，由 controller 處理 HTTP headers／response。`removeAttachment` 回傳 `{ id, deleted: true }`。查找／下載只接受 ready attachments，並驗證 resource、parent record、field 同 attachment ID 嘅關聯；不存在／已刪除回 404。
+`createAttachment` and `findAttachment` return `{ id, name, mimeType, size, createdAt }`. Finding an attachment reads only database metadata; it does not access S3. `downloadAttachment` returns that metadata and a Node readable stream. The controller sets HTTP headers and sends the response. `removeAttachment` returns `{ id, deleted: true }`.
 
-依賴方向係 `ResourceController → ResourceService → AttachmentService → S3Service`。ResourceService 同 AttachmentService 共用 `ResourceRecordStore` 做 parent lookup／transaction locking，避免 services 相互依賴。Storage cleanup CLI 仍直接使用 AttachmentService，唔屬於 controller request flow。
+Find/download operations accept only ready attachments and validate the resource, parent record, field, and attachment ownership. Missing/deleted attachments return 404; invalid attachment fields return 400.
+
+Dependencies flow from `ResourceController` to `ResourceService`, then `AttachmentService`, then `S3Service`. The resource and attachment services share `ResourceRecordStore` for parent lookup and transactional locking, avoiding circular dependencies. The storage cleanup CLI uses `AttachmentService` directly, outside the controller request flow.
+
+## Module configuration
+
+Import `ResourceModule.forRoot(...)` once in the host application. `resourcesPath` is required and should be an absolute path such as `join(__dirname, "resources")` in `src/app.module.ts`. The default file extension is `.js`; use `.ts` only when a TypeScript runtime such as ts-node is installed and active.
+
+The module builds its own data source from `.env`. Advanced applications can supply a dedicated `dataSource` created with `createCmsDataSource(...)`, for example to register migrations. The CMS module initializes that source if necessary and closes it when the module shuts down; do not share it with an unrelated connection owner.
+
+Importing `defineResource` or the package entry point does not discover files or connect to a database. Resource discovery occurs when `forRoot` is called, and connection initialization occurs during Nest startup. Environment configuration is read when the package is imported, so set process variables or create `.env` before startup.

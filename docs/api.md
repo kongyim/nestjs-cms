@@ -1,19 +1,19 @@
 # API contract
 
-Base URL：`http://localhost:3000/api`。JSON request 使用 `Content-Type: application/json`。如設定 `ADMIN_API_KEY`，所有 backend requests 加 `X-API-Key`；Browser 只需要連接 backend，所有附件流量都經 attachment API。
+Base URL: `http://localhost:3000/api`. Use `Content-Type: application/json` for JSON requests. When `ADMIN_API_KEY` is configured, include `X-API-Key` in every backend request. Browsers communicate only with the backend; all attachment traffic goes through the attachment API.
 
 ## Resources
 
-| Method      | Path           | 說明                                                        |
-| ----------- | -------------- | ----------------------------------------------------------- |
-| GET         | /_resources    | Resource metadata、input JSON Schema、query/attachment 設定 |
-| GET         | /:resource     | List（pagination + filtering + sorting）                    |
-| GET         | /:resource/:id | Single record                                               |
-| POST        | /:resource     | Create（201）                                               |
-| PATCH / PUT | /:resource/:id | Partial update（200）                                       |
-| DELETE      | /:resource/:id | Delete（200）                                               |
+| Method      | Path           | Behavior                                                            |
+| ----------- | -------------- | ------------------------------------------------------------------- |
+| GET         | /_resources    | Resource metadata, input JSON Schema, query and attachment settings |
+| GET         | /:resource     | List with pagination, filtering, and sorting                        |
+| GET         | /:resource/:id | Get one record                                                      |
+| POST        | /:resource     | Create a record; returns 201                                        |
+| PATCH / PUT | /:resource/:id | Partially update a record; returns 200                              |
+| DELETE      | /:resource/:id | Delete a record; returns 200                                        |
 
-Create/get/update 回傳 record 本身：
+Create/get/update return the record itself:
 
 ```json
 {
@@ -29,11 +29,15 @@ Create/get/update 回傳 record 本身：
 }
 ```
 
-List 回傳 `{ data: [...], meta: { page, limit, total, totalPages } }`。預設 `page=1&limit=25`；limit 1–150；page 1–100000；唔接受 `limit=all`。無結果時 `totalPages=0`。同時有寫入時 count 同 data 可能輕微不同，並非 snapshot pagination。
+List returns `{ data: [...], meta: { page, limit, total, totalPages } }`. Defaults are `page=1&limit=25`. Limits are 1–150 items and pages 1–100000. `limit=all` is not supported. Empty results have `totalPages=0`. The count and data may differ slightly under concurrent writes; pagination is not a database snapshot.
 
-`query` 係 URL-encoded JSON object。各欄位／operator 之間 AND，`$in` 內部 OR。只接受 definition 嘅 filterable 欄位同 `id`。Operators 統一用 `$` 前綴：`$eq`、`$in`、`$contains`、`$gt`、`$gte`、`$lt`、`$lte`、`$locate`；唔支援 nested relation、arbitrary SQL、OR tree。`$eq: null` 對應 SQL IS NULL。`$contains` 係 literal substring（會 escape `%` / `_`），大小寫跟 database collation；只用於 string 欄位。數字比較／日期比較需使用對應欄位類型。
+### Filtering and sorting
 
-直接值仍然係 equality shorthand，例如 `{ "status": "published" }` 等同 `{ "status": { "$eq": "published" } }`。舊 unprefixed operators（例如 `{ "title": { "contains": "Nest" } }`）會回 400；正確拼法係 `$contains`，唔接受 `$contians`。真實欄位名稱如 `eq` / `in` 可照常出現在最外層，只需列入 resource filterable allowlist。
+`query` is a URL-encoded JSON object. Conditions across fields and operators are combined with AND; values inside `$in` are alternatives. Only the resource's `filterable` fields and `id` are accepted.
+
+Operators use a `$` prefix: `$eq`, `$in`, `$contains`, `$gt`, `$gte`, `$lt`, `$lte`, and `$locate`. Nested relation queries, arbitrary SQL, and OR trees are not supported. `$eq: null` translates to SQL IS NULL. `$contains` searches a literal substring, escaping `%` and `_`; use it on string fields. Case sensitivity follows database collation. Comparison values must suit the target column type.
+
+A direct value is equality shorthand: `{ "status": "published" }` is equivalent to `{ "status": { "$eq": "published" } }`. Unprefixed operators such as `{ "title": { "contains": "Nest" } }` return 400. The correct spelling is `$contains`; `$contians` is not accepted. Real fields named `eq` or `in` can still appear at the top level if included in the filter allowlist.
 
 ```sh
 curl -G http://localhost:3000/api/articles \
@@ -42,9 +46,21 @@ curl -G http://localhost:3000/api/articles \
   --data-urlencode 'page=1' --data-urlencode 'limit=25'
 ```
 
-### `$locate`：搜尋第一次出現嘅位置
+Sort with `sort=field:asc` or `field:desc`; the default is `createdAt:desc`. Only declared sortable fields, `id`, and `createdAt` are accepted. An additional `id` sort makes ties deterministic. Delete returns `{ id, deleted: true }`; deleting a missing record returns 404.
 
-只支援 string 欄位。`{ "title": { "$locate": { "search": "Nest" } } }` 同簡寫 `{ "title": { "$locate": "Nest" } }` 都會選出有出現 `Nest` 嘅 records（預設位置 `$gt: 0`）。進階格式用 `search` 指定文字，再用 `$eq` / `$gt` / `$gte` / `$lt` / `$lte` 比較位置；多個 comparisons 之間 AND。
+### `$locate`: find the first substring position
+
+`$locate` supports string columns only. These forms both match records containing `Nest` anywhere, using a default position comparison of `$gt: 0`:
+
+```json
+{ "title": { "$locate": { "search": "Nest" } } }
+```
+
+```json
+{ "title": { "$locate": "Nest" } }
+```
+
+To filter by position, provide `search` and one or more of `$eq`, `$gt`, `$gte`, `$lt`, or `$lte`. Multiple comparisons are combined with AND:
 
 ```json
 {
@@ -54,23 +70,25 @@ curl -G http://localhost:3000/api/articles \
 }
 ```
 
-以上選出 `Nest` 第一次出現位置係 1 嘅 records。位置由 1 開始，搵唔到係 0；`$eq: 0` 表示無出現，`$gte: 5` 表示第一次出現喺第 5 個字元或之後。呢個係 filter，唔會額外回傳 position 欄位。Null 欄位嘅結果係 SQL NULL，唔會當成 0；如要篩選 null，使用欄位 `$eq: null`。
+This selects records whose first occurrence of `Nest` begins at position 1. Positions start at 1; a missing substring produces 0. `$eq: 0` means not found, and `$gte: 5` means the first occurrence starts at the fifth character or later. This filters records; it does not add a position field to the response. A null column produces SQL NULL rather than 0; use the field's `$eq: null` to select nulls.
 
-`search` 必須係非空字串；position comparisons 可省略，預設匹配任何搵到嘅位置。有提供 `$eq` / `$gt` / `$gte` / `$lt` / `$lte` 時，只套用指定條件，唔會額外加 `$gt: 0`；比較值必須係非負整數。`%` / `_` 係普通字元，唔係 wildcard，search 同位置全部 parameterized。PostgreSQL 使用 [STRPOS](https://www.postgresql.org/docs/17/functions-string.html)，MySQL 使用 [LOCATE](https://dev.mysql.com/doc/refman/8.4/en/string-functions.html#function_locate)；大小寫／collation 行為跟 database，唔保證兩邊一致。
+`search` must be a nonempty string. Position comparisons are optional, but when supplied, only those conditions apply: no implicit `$gt: 0` is added. Comparison values must be nonnegative integers. `%` and `_` are literal characters, not wildcards. Search text and positions are parameterized.
 
-`sort=field:asc` 或 `field:desc`；預設 createdAt:desc。只允許 sortable 欄位、id 同 createdAt，另以 id 穩定排序。Delete 回 `{ id, deleted: true }`；刪除不存在 record 回 404。
+PostgreSQL uses [STRPOS](https://www.postgresql.org/docs/17/functions-string.html); MySQL uses [LOCATE](https://dev.mysql.com/doc/refman/8.4/en/string-functions.html#function_locate). Case and collation behavior follow the database and are not guaranteed to be identical.
 
 ## Attachments
 
-所有 upload/download/delete 都經 backend：`Browser → Attachment API → S3 / MinIO`。Browser 唔會收到 S3 URL、bucket 或 object key，亦唔需要連接 storage endpoint。所有 attachment path 綁定 resource、record、field 同 attachment ID；跨 record 存取會 404。
+All uploads, downloads, and deletes go through `Browser → Attachment API → S3 / MinIO`. Browsers do not receive S3 URLs, bucket names, or object keys, and do not need access to the storage endpoint. Each attachment path is bound to its resource, record, field, and attachment ID. Access through a different record returns 404.
 
-| Method | Path                                            | 說明                                                          |
-| ------ | ----------------------------------------------- | ------------------------------------------------------------- |
-| POST   | /:resource/:id/attachments/:field               | multipart upload；field 名稱為 `file`，成功回 metadata（201） |
-| GET    | /:resource/:id/attachments/:field/:attachmentId | 直接 stream 檔案內容（200），唔係 JSON 或 redirect            |
-| DELETE | /:resource/:id/attachments/:field/:attachmentId | Detach，回 `{ id, deleted: true }`，storage cleanup 可重試    |
+| Method | Path                                            | Behavior                                                                               |
+| ------ | ----------------------------------------------- | -------------------------------------------------------------------------------------- |
+| POST   | /:resource/:id/attachments/:field               | Multipart upload using the `file` field; returns metadata with 201                     |
+| GET    | /:resource/:id/attachments/:field/:attachmentId | Streams file bytes with 200, not JSON or a redirect                                    |
+| DELETE | /:resource/:id/attachments/:field/:attachmentId | Detaches the attachment; returns `{ id, deleted: true }`; storage cleanup is retryable |
 
-每次 POST 一個 file；multiple attachment field 可重複 POST。唔接受其他 multipart fields，size 以 backend 實際收到嘅 bytes 計算。只接受 definition 允許嘅 MIME types；大小受 global `ATTACHMENT_MAX_BYTES` 同 field `maxBytes` 較小者限制。MIME allowlist 檢查係 client 提供嘅 multipart Content-Type，未做內容偵測／病毒掃描。
+Send one file per POST. Repeat POST to add files to a multiple-attachment field. Other multipart fields are rejected. Size is determined from the bytes received by the backend. The MIME type must be allowed by the resource definition, and the size must satisfy both `ATTACHMENT_MAX_BYTES` and the field's `maxBytes`. MIME validation checks the client-supplied multipart Content-Type; it does not inspect file contents or scan for malware.
+
+Replace the ID placeholders and local filename in these examples:
 
 ```sh
 curl -X POST http://localhost:3000/api/articles/ARTICLE_ID/attachments/cover \
@@ -79,14 +97,17 @@ curl http://localhost:3000/api/articles/ARTICLE_ID/attachments/cover/ATTACHMENT_
   --output photo.png
 ```
 
-Upload 回傳 `{ id, name, mimeType, size, createdAt }`；無額外 complete 步驟。Single field 新 upload 成功寫入 S3 並 commit 後先取代舊附件；upload 失敗仍保留舊附件。Multiple fields append。Download 使用 metadata 嘅 Content-Type、Content-Length 同 `Content-Disposition: attachment`，加 `Cache-Control: private, no-store` 同 `X-Content-Type-Options: nosniff`。
+Upload returns `{ id, name, mimeType, size, createdAt }`. No completion request is required. A single attachment is replaced only after the new object is stored and its metadata committed; failed uploads retain the previous attachment. Multiple fields append attachments.
 
-### Admin portal JavaScript
+Downloads use the metadata's Content-Type and Content-Length, with `Content-Disposition: attachment`, `Cache-Control: private, no-store`, and `X-Content-Type-Options: nosniff`.
+
+### Frontend JavaScript
 
 ```js
-const apiBase = "/api"; // same-origin frontend
-// 若啟用 shared API key，加 { 'X-API-Key': key }；日後改用 user auth。
+const apiBase = "/api"; // Same-origin frontend.
+// Add { "X-API-Key": key } if enabled; replace with user auth when available.
 const authHeaders = {};
+
 async function uploadAttachment(resource, recordId, field, file) {
   const data = new FormData();
   data.append("file", file);
@@ -98,10 +119,11 @@ async function uploadAttachment(resource, recordId, field, file) {
       body: data,
     },
   );
-  // 唔好自行設定 Content-Type，browser 需要加 multipart boundary。
+  // Let the browser set Content-Type, including the multipart boundary.
   if (!response.ok) throw new Error("Attachment upload failed");
   return response.json();
 }
+
 async function downloadAttachment(
   resource,
   recordId,
@@ -127,18 +149,18 @@ async function downloadAttachment(
 }
 ```
 
-Frontend 同 API same origin 時，可設定 `CORS_ORIGINS=`。跨 origin 部署只需設定 backend CORS；S3／MinIO 唔需要 browser CORS。Delete／replace commit 後新 download request 即回 404；已開始傳送嘅 response 不會被追溯取消。
+For a same-origin frontend and API, set `CORS_ORIGINS=`. A frontend on another origin requires backend CORS configuration. S3/MinIO does not require browser CORS. Once deletion or replacement commits, new requests for the old attachment return 404. Responses already streaming are not retroactively cancelled.
 
-舊 `/uploads` 同 `/:attachmentId/complete` endpoints 已移除，改用上面一個 multipart POST。現有 ready attachments 繼續透過新 GET 下載，無需改 object keys 或 database schema。升級前已發出嘅 presigned URL 不能由應用程式即時撤銷，會按原有期限過期；新 API 唔再簽發 URL。
+The former `/uploads` and `/:attachmentId/complete` endpoints were removed in favor of a single multipart POST. Existing ready attachments remain downloadable through the new GET route without changing object keys or the database schema. Previously issued presigned URLs expire according to their original lifetime; the application no longer issues new ones.
 
 ## Errors
 
-- 400：Zod validation、invalid ID/query、缺少檔案／不允許嘅 MIME type。
-- 401：缺少／錯誤 API key（如啟用）。
-- 404：resource、record、attachment 不存在。
-- 409：unique／foreign-key constraint conflict。
-- 413：附件超過 global 或 field size limit。
-- 500：未預期錯誤（包括 hook 錯誤），唔回傳 SQL／stack。
-- 503：S3 upload/download 不可用或 metadata 指向嘅物件缺失。
+- 400: Zod validation failure, invalid ID/query, missing file, or unsupported MIME type.
+- 401: Missing or incorrect API key when enabled.
+- 404: Resource, record, or attachment not found.
+- 409: Unique or foreign-key constraint conflict.
+- 413: Attachment exceeds the global or field size limit.
+- 500: Unexpected error, including hook failures; SQL and stack traces are not returned.
+- 503: S3 upload/download unavailable, or metadata points to missing object content.
 
-Zod errors 回 `{ "message": "Validation failed", "issues": [...] }`；一般 HTTP errors 回 `{ "statusCode": 400, "message": "...", "error": "Bad Request" }`。Client 應按 HTTP status 判斷失敗。
+Zod errors return `{ "message": "Validation failed", "issues": [...] }`. Other HTTP errors typically return `{ "statusCode": 400, "message": "...", "error": "Bad Request" }`. Clients should use the HTTP status to determine failure.

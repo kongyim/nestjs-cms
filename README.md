@@ -1,67 +1,188 @@
-# NestJS CMS backend
+# nestjs-cms
 
-第一部分：以 resource definitions 驅動嘅 CMS API。參考 `polyu-souvenirs/src/modules/resource` 同 `polyu-souvenirs/resources`，保留 Zod schema、集中 resource config、hooks 同通用 CRUD；業務邏輯放喺 resource definitions，唔放入核心 service。
+Add a resource-driven CMS backend to a NestJS application. Define each resource in one file; the module discovers it and provides validated CRUD APIs, filters, lifecycle hooks, and S3-backed attachments.
 
-## 快速開始
+## Quick start
 
-需要 Node.js 22+、npm 同 Docker Compose。
+Requires Node.js 22+, npm, and a PostgreSQL database. The package supports NestJS 11 with the Express adapter.
+
+### 1. Create a NestJS project and install the package
+
+```sh
+npx @nestjs/cli@11 new my-cms --package-manager npm
+cd my-cms
+npm install nestjs-cms
+```
+
+**Publication status:** this version has not been published to npm yet. The install-by-name command above is the intended workflow after publication; it should not be used to fetch an unrelated package. Until then, [install a locally packed release](#install-a-local-package) with `npm install /path/to/nestjs-cms-0.1.0.tgz` instead. No source folders need to be copied.
+
+The package includes Zod, TypeORM, PostgreSQL/MySQL drivers, dotenv, and the S3 client. The NestJS project supplies the NestJS runtime dependencies.
+
+### 2. Create a resource
+
+```sh
+mkdir -p src/resources
+```
+
+Create `src/resources/pages.ts`:
+
+```ts
+import { defineResource, z } from "nestjs-cms";
+
+export default defineResource({
+  name: "pages",
+  schema: z
+    .object({
+      title: z.string().trim().min(1).max(200),
+      status: z.enum(["draft", "published"]).default("draft"),
+    })
+    .strict(),
+  columns: {
+    title: { type: String, length: 200 },
+    status: { type: String, length: 20 },
+  },
+  filterable: ["title", "status"],
+  sortable: ["title", "createdAt"],
+});
+```
+
+Keep the folder inside `src` so the standard Nest compiler builds it into `dist/resources`. Each additional resource requires only one new file in this folder. No resource index or per-resource registration is needed.
+
+### 3. Import the CMS module once
+
+Add `ResourceModule.forRoot(...)` to the `imports` array in `src/app.module.ts`:
+
+```ts
+import { Module } from "@nestjs/common";
+import { join } from "node:path";
+import { ResourceModule } from "nestjs-cms";
+
+@Module({
+  imports: [
+    ResourceModule.forRoot({ resourcesPath: join(__dirname, "resources") }),
+  ],
+})
+export class AppModule {}
+```
+
+You can keep your existing controllers, providers, and other imports. The module's API-key guard and error filter apply only to CMS routes.
+
+### 4. Configure `.env`
+
+Create `.env` in the new project's root:
+
+```dotenv
+NODE_ENV=development
+PORT=3000
+DB_TYPE=postgres
+DB_HOST=127.0.0.1
+DB_PORT=5432
+DB_USERNAME=cms
+DB_PASSWORD=cms_dev_password
+DB_DATABASE=cms
+DB_SYNCHRONIZE=true
+ADMIN_API_KEY=
+CORS_ORIGINS=
+```
+
+Use credentials for an existing PostgreSQL database. The package loads `.env` automatically. With `DB_SYNCHRONIZE=true`, it creates the resource tables in that database during startup. Use migrations instead in production.
+
+If you need a local database and port 5432 is available:
+
+```sh
+docker run --name my-cms-postgres -d \
+  -e POSTGRES_USER=cms -e POSTGRES_PASSWORD=cms_dev_password -e POSTGRES_DB=cms \
+  -p 127.0.0.1:5432:5432 postgres:17-alpine
+```
+
+Wait for PostgreSQL to be ready before starting the application. S3/MinIO is needed only when using attachments; plain resource CRUD works without object storage. See [storage configuration](docs/operations.md#aws-s3-configuration) for attachment settings.
+
+### 5. Start the application
+
+```sh
+npm run start:dev
+```
+
+```sh
+curl http://localhost:3000/api/_resources
+curl -X POST http://localhost:3000/api/pages \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"About us"}'
+curl http://localhost:3000/api/pages
+```
+
+After adding or removing resource files, rebuild/restart the application. The standard Nest CLI TypeScript build emits the resource files separately; bundlers require additional configuration to preserve those files for runtime discovery.
+
+For production, run the host project's `npm run build` and `npm run start:prod`, disable schema synchronization, and apply reviewed migrations. The library does not run or install its demo migrations in your application.
+
+### Optional: CORS and shutdown hooks
+
+Same-origin frontends do not require CORS. To apply `CORS_ORIGINS` for a separate frontend and enable graceful shutdown, call the helper in your application's existing `src/main.ts`:
+
+```ts
+import { configureCmsApp } from "nestjs-cms";
+
+// After NestFactory.create(AppModule), before app.listen(...):
+configureCmsApp(app);
+```
+
+Set `CORS_ORIGINS=http://localhost:5173`, for example. Your host application still controls its listening port, bind address, and bootstrap process. If it already manages CORS and shutdown hooks, keep that configuration instead.
+
+## Install a local package
+
+From this library's checkout:
+
+```sh
+npm ci
+npm pack
+```
+
+This builds `nestjs-cms-0.1.0.tgz`, including JavaScript and TypeScript declarations. In the new NestJS project, replace the install-by-name step with:
+
+```sh
+npm install /absolute/path/to/nestjs-cms-0.1.0.tgz
+```
+
+The package excludes the demo application, demo resources, demo migrations, tests, and local secrets. Packing does not publish anything to a registry.
+
+## Documentation
+
+- [Resource definitions, hooks, and service methods](docs/resources.md)
+- [API contract and frontend examples](docs/api.md)
+- [Environment, databases, storage, and deployment](docs/operations.md)
+
+`ResourceService` is exported for use in other application services. It provides CRUD and `createAttachment`, `findAttachment`, `downloadAttachment`, and `removeAttachment`. All browser attachment traffic goes through the backend API.
+
+User login, roles, and resource rights are not implemented. Setting `ADMIN_API_KEY` requires `X-API-Key` on CMS requests; production currently requires a key of at least 32 characters. This is an integration mechanism, not a full authentication system.
+
+## Develop this library
+
+The repository also contains a demo application with `categories` and `articles`. These instructions are for library contributors, not package consumers:
 
 ```sh
 npm ci
 cp .env.example .env
 docker compose up -d --build
-# 等 postgres、minio healthy，同 minio-init 成功退出（exit 0）
-docker compose ps -a
+# Wait for postgres/minio to be healthy and minio-init to exit with code 0.
 npm run seed
 npm run dev
 ```
 
-API：`http://localhost:3000/api`。MinIO console：`http://localhost:9001`（development 帳密見 `.env.example`）。首次 MinIO build 會編譯官方 pinned source，需要下載 Go dependencies。Docker Hub / Quay 的原有 MinIO image 已無法拉取，因此本 project 自行 build；只作本機 development 使用。
+The first MinIO build compiles a pinned source release and takes longer than subsequent starts. The demo API runs at `http://localhost:3000/api`, and the MinIO console at `http://localhost:9001`.
 
 ```sh
-curl http://localhost:3000/api/_resources
-curl http://localhost:3000/api/articles
-curl -X POST http://localhost:3000/api/articles \
-  -H 'Content-Type: application/json' \
-  -d '{"title":"First article","slug":"first-article"}'
-```
-
-預設 `.env` 開啟 development schema synchronization；正式環境必須關閉並使用 migrations。預設只 bind `127.0.0.1`。未設定 `ADMIN_API_KEY` 時開放本機 API；設定後所有 API 需要 `X-API-Key`。**未實作 user login、roles 或 resource rights**；shared key 係過渡用，唔係完整 authentication 系統。
-
-## 已提供
-
-- Resource discovery：JSON Schema、可篩選／排序欄位、attachment 設定，供 admin portal 使用。
-- 通用 list/get/create/update/delete，Zod 驗證、分頁、allowlist filters / sort。
-- 六個 lifecycle hooks，before/after hooks 與寫入共享 transaction。
-- Single / multiple attachments：multipart upload → backend 寫入 S3；download 經 API stream，唔會經 backend filesystem。
-- PostgreSQL demo/test database；相同 TypeORM definitions 支援 MySQL 8.4。
-- Demo `categories` / `articles`，multilingual JSON、foreign key、hooks 範例。
-- Private MinIO bucket、staging expiration、可重試 cleanup、portable initial migration。
-
-## 文件
-
-- [Resource definitions 與 hooks](docs/resources.md)
-- [API contract 與 admin portal 範例](docs/api.md)
-- [S3、MinIO、資料庫與部署](docs/operations.md)
-
-## 測試
-
-使用 Prettier 統一格式：`npm run format` 自動修正，`npm run format:check` 只檢查（可用於 CI）。設定見 `.prettierrc.json`；build output、dependencies 同 environment files 會略過。
-
-VS Code 開啟本 project 後，安裝 workspace 推薦嘅 **Prettier - Code formatter** extension（`esbenp.prettier-vscode`），儲存檔案時就會自動格式化。Workspace 設定已放喺 `.vscode/settings.json`，會使用本 project 嘅 Prettier config。
-
-```sh
+npm run format
+npm run format:check
 npm run build
 npm test
-# 使用獨立 cms_test DB；不會清空 cms demo DB
 npm run test:integration
-# 同一套 integration suite 驗證 MySQL
+# Optional MySQL verification:
 docker compose --profile mysql up -d mysql
 DB_TYPE=mysql DB_PORT=3307 npm run test:integration
 ```
 
-Docker 初始化時建立 `cms_test`；若使用已有 volume，請自行建立該 test database 並授權 cms user。Integration tests 透過 migration 建表，以實際 SQL database 及 MinIO 測試 HTTP API、hooks rollback、multipart API 上傳、API streaming download、replacement、cross-record 拒絕及 cleanup。測試會建立並清理自己嘅 records。
+Integration tests use the dedicated `cms_test` database and real MinIO services. The repository's VS Code settings enable formatting on save when the recommended Prettier extension is installed. These editor settings are not installed into consuming applications.
 
-## 範圍
+## Scope
 
-今次只做 resource module。原有專案嘅 import/export、image resize、encrypted/hashed fields、nested relation expansion、legacy i18n 欄位映射及權限系統未搬入；本版本以 nested JSON 保存 multilingual/object fields。API 亦非原專案 drop-in replacement，差異見 resource 文件。其餘兩個部分可喺之後加入。
+The package implements resource discovery, CRUD, filters, transactional hooks, and backend-managed attachments. Import/export, image resizing, encrypted/hashed fields, automatic relation expansion, and resource permissions are not included. Multilingual and nested fields use JSON. See the [comparison with the original project](docs/resources.md#comparison-with-the-original-project) for differences from `polyu-souvenirs`.

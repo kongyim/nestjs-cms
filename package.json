@@ -1,7 +1,6 @@
 {
   "name": "nestjs-cms",
   "version": "0.1.0",
-  "private": true,
   "description": "Definition-driven NestJS CMS with S3 attachments",
   "engines": {
     "node": ">=22"
@@ -18,18 +17,15 @@
     "seed": "ts-node scripts/seed.ts",
     "storage:cleanup": "ts-node scripts/cleanup.ts",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "prepack": "npm run build",
+    "pack:local": "npm pack"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.850.0",
-    "@nestjs/common": "^11.1.0",
-    "@nestjs/core": "^11.1.0",
-    "@nestjs/platform-express": "^11.1.0",
     "dotenv": "^16.6.0",
     "mysql2": "^3.14.0",
     "pg": "^8.16.0",
-    "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2",
     "typeorm": "^0.3.25",
     "zod": "^4.0.0"
   },
@@ -45,6 +41,38 @@
     "ts-jest": "^29.4.0",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "@nestjs/common": "^11.1.0",
+    "@nestjs/core": "^11.1.0",
+    "@nestjs/platform-express": "^11.1.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
+  },
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "require": "./dist/src/index.js",
+      "default": "./dist/src/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/src",
+    "!dist/src/main.*",
+    "!dist/src/app.module.*",
+    "!dist/src/database/data-source.*",
+    "!dist/src/database/migrations",
+    "README.md",
+    "docs",
+    ".env.example"
+  ],
+  "peerDependencies": {
+    "@nestjs/common": "^11.1.0",
+    "@nestjs/core": "^11.1.0",
+    "@nestjs/platform-express": "^11.1.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
   }
 }

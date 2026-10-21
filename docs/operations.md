@@ -1,119 +1,166 @@
-# Development、storage 與 deployment
+# Development, storage, and deployment
+
+The quick start in the README is for applications that install `nestjs-cms`. Commands involving this repository's `docker-compose.yml`, seed script, or demo migration are for library contributors. A consuming application owns its database, migrations, startup scripts, and storage provisioning.
 
 ## Environment
 
-所有 runtime 設定由 `.env` 讀取並經 Zod 驗證；OS environment 優先。`.env` 不加入 version control。
+Runtime settings are loaded from `.env` and validated with Zod. Process environment variables take precedence. Do not commit `.env` to version control.
 
-| 設定                                    | 說明                                                                    |
-| --------------------------------------- | ----------------------------------------------------------------------- |
-| NODE_ENV                                | development / test / production                                         |
-| HOST / PORT                             | 預設 127.0.0.1 / 3000；container 部署設定 HOST=0.0.0.0                  |
-| CORS_ORIGINS                            | 逗號分隔 admin portal origins                                           |
-| ADMIN_API_KEY                           | optional shared key；production 暫時要求最少 32 chars，等待 auth module |
-| DB_TYPE                                 | postgres / mysql                                                        |
-| DB_HOST / DB_PORT                       | database endpoint；port 未提供按 driver 取預設                          |
-| DB_USERNAME / DB_PASSWORD / DB_DATABASE | database credentials/name                                               |
-| DB_SYNCHRONIZE                          | 只用於 development；production 啟用會 fail fast                         |
-| S3_REGION / S3_BUCKET                   | S3 region 及已存在 private bucket                                       |
-| S3_ENDPOINT                             | MinIO / S3-compatible endpoint；AWS S3 可省略                           |
-| S3_FORCE_PATH_STYLE                     | MinIO 用 true，AWS S3 通常 false                                        |
-| S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY | 要同時提供；兩者省略時使用 AWS credential chain / IAM role              |
-| ATTACHMENT_MAX_BYTES                    | 預設 20 MiB；最大 1 GiB，field maxBytes 可以再收窄                      |
+| Setting                                 | Meaning                                                                                                  |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| NODE_ENV                                | development / test / production                                                                          |
+| HOST / PORT                             | Used by the repository demo; a consuming Nest application controls its own listen options                |
+| CORS_ORIGINS                            | Comma-separated frontend origins                                                                         |
+| ADMIN_API_KEY                           | Optional shared key; production requires at least 32 characters until user authentication is implemented |
+| DB_TYPE                                 | postgres / mysql                                                                                         |
+| DB_HOST / DB_PORT                       | Database endpoint; an omitted port uses the driver's default                                             |
+| DB_USERNAME / DB_PASSWORD / DB_DATABASE | Database credentials and name                                                                            |
+| DB_SYNCHRONIZE                          | Development only; enabling it in production prevents startup                                             |
+| S3_REGION / S3_BUCKET                   | Region and existing private bucket                                                                       |
+| S3_ENDPOINT                             | MinIO or S3-compatible endpoint; omit for AWS S3                                                         |
+| S3_FORCE_PATH_STYLE                     | Use true for MinIO; typically false for AWS S3                                                           |
+| S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY | Provide both, or omit both to use the AWS credential chain/IAM role                                      |
+| ATTACHMENT_MAX_BYTES                    | Defaults to 20 MiB, with a configuration maximum of 1 GiB; field maxBytes can lower the limit            |
 
-API 喺 host 跑時 `.env.example` endpoint 係 `http://127.0.0.1:9000`。如果 API 放入 compose network，設 `S3_ENDPOINT=http://minio:9000`。呢個 endpoint 只需 backend 接達；browser 唔會直接連接 S3／MinIO。已移除 `S3_PUBLIC_ENDPOINT` 同 `S3_URL_TTL_SECONDS` 設定。
+When the API runs on the host, `.env.example` uses `http://127.0.0.1:9000`. In the Compose network, use `S3_ENDPOINT=http://minio:9000`. Only the backend needs access to that endpoint. The browser never connects directly to S3/MinIO. `S3_PUBLIC_ENDPOINT` and `S3_URL_TTL_SECONDS` have been removed.
 
-## PostgreSQL / MySQL
+For a same-origin frontend, use `CORS_ORIGINS=`. If the variable is omitted entirely, the code defaults to `http://localhost:5173`. For a separate frontend origin, list that origin explicitly and call `configureCmsApp(app)` during the host application bootstrap, or configure CORS yourself. Since storage traffic passes through the backend, **S3 bucket/MinIO browser CORS is not required**.
 
-預設 PostgreSQL 17，host port 5432。MySQL 8.4 係 optional compose profile，host port **3307**，避免同已有 MySQL port 3306 衝突。
+## Local services
+
+```sh
+docker compose up -d --build
+docker compose ps -a
+```
+
+Wait for PostgreSQL and MinIO to become healthy and for `minio-init` to exit with code 0. The initializer creates a private bucket and a lifecycle rule for legacy staging objects.
+
+The MinIO image is built from a pinned official source release because the public images used during initial setup could no longer be pulled. The first build downloads and compiles Go dependencies. The source-build approach follows the [official release instructions](https://github.com/minio/minio/releases/tag/RELEASE.2025-10-15T17-29-55Z). This Compose setup is for local development, not a production storage deployment.
+
+## PostgreSQL and MySQL
+
+PostgreSQL 17 is the default, exposed on host port 5432. MySQL 8.4 is an optional Compose profile, exposed on host port **3307** to avoid conflicts with another MySQL server on 3306.
 
 ```sh
 docker compose --profile mysql up -d mysql
-# 或修改 .env 對應項目
+# Alternatively, change these values in .env.
 DB_TYPE=mysql DB_PORT=3307 DB_SYNCHRONIZE=true npm run seed
 DB_TYPE=mysql DB_PORT=3307 npm run dev
 ```
 
-兩個 database 都提供獨立 `cms` / `cms_test`。切換 driver 並唔會搬移資料。JSON storage、UUID varchar、一般 SQL column types、parameterized query 同 row locks 都使用 PG/MySQL 共同支援行為。搜尋 case sensitivity 依 database collation；唔保證兩邊相同。
+Both services initialize separate `cms` and `cms_test` databases. Switching drivers does not transfer data. Resource definitions use compatible JSON storage, UUID varchar columns, SQL types, parameterized queries, and row locks. Search case sensitivity depends on database collation and may differ between drivers.
 
 ## Migrations
 
-已提供 portable initial migration（categories、articles、cms_attachments、foreign key）。對**全新空 database**：
+### Installed applications
+
+The package does not include the demo migrations. Use `DB_SYNCHRONIZE=true` only for initial development. For production, create a data source in your application and generate/review migrations for your own resources:
+
+```ts
+// src/cms-data-source.ts
+import { join } from "node:path";
+import { createCmsDataSource, loadResources } from "nestjs-cms";
+
+export const cmsDataSource = createCmsDataSource(
+  loadResources(join(__dirname, "resources"), ".js"),
+  { migrations: [join(__dirname, "migrations/*.js")] },
+);
+```
+
+Build the host application, then run the TypeORM CLI against the compiled file with synchronization disabled. The package supplies TypeORM as a dependency; declare it directly in your host dependencies if you depend on its CLI as part of your own tooling.
+
+```sh
+npm install typeorm@^0.3.25
+npm run build
+DB_SYNCHRONIZE=false npx typeorm migration:generate src/migrations/InitialCms -d dist/cms-data-source.js
+# Review the generated migration, rebuild, then apply it.
+npm run build
+DB_SYNCHRONIZE=false npx typeorm migration:run -d dist/cms-data-source.js
+```
+
+For runtime use, pass `dataSource: cmsDataSource` to `ResourceModule.forRoot` alongside the same `resourcesPath`. Generating a migration requires a database representing the previous schema, not one already synchronized to the new schema. Adapt output paths if your host compiler uses a different layout.
+
+### Repository demo
+
+The portable initial migration creates categories, articles, attachment metadata, and the article/category foreign key. For a **new, empty database**:
 
 ```sh
 DB_SYNCHRONIZE=false npm run db:migrate
 ```
 
-已經用 synchronize 建過表嘅 development DB 唔好直接執行 initial migration；應使用新空 database，或者經人手 review 後建立 migration baseline。唔好喺有用資料嘅 DB 重建／reset。
+Do not apply the initial migration directly to a development database whose tables were already created by synchronization. Use a fresh database or establish a reviewed migration baseline. Do not reset a database containing data you need to preserve.
 
-修改 resource 後，在同 schema 嘅 development database 產生 migration：
+After changing a resource, generate a migration against a development database that represents the previously deployed schema:
 
 ```sh
 DB_SYNCHRONIZE=false npm run db:generate -- src/database/migrations/AddPages
-# review SQL，尤其 unique constraints、nullable 及資料轉換
+# Review the SQL, especially uniqueness, nullability, and data conversions.
 DB_SYNCHRONIZE=false npm run db:migrate
 ```
 
-TypeORM 自動產生 migration 通常係 driver-specific；需要同時維護 PG/MySQL 時，使用 QueryRunner Table/ForeignKey API 或按 driver 分支，並喺兩邊驗證。現有 initial migration 已使用此方式。MySQL DDL 會 implicit commit，唔好假設 schema changes 可以 transaction rollback。
+Generate the migration before synchronization applies the new schema, otherwise there may be no difference left to generate. TypeORM-generated migrations are usually driver-specific. To support both PostgreSQL and MySQL, use the QueryRunner Table/ForeignKey APIs or explicit driver branches and verify both databases. The initial migration follows this approach. MySQL DDL can implicitly commit; do not assume schema changes can be rolled back transactionally.
 
-Production build 包含 resources 同 migrations：
+Production builds include resources and migrations:
 
 ```sh
 npm ci
 npm run build
-# 使用 production env / secret manager，DB_SYNCHRONIZE=false
+# Supply production environment/secrets and set DB_SYNCHRONIZE=false.
 node node_modules/typeorm/cli.js migration:run -d dist/src/database/data-source.js
 npm start
 ```
 
 ## Attachment lifecycle
 
-所有附件流量：`Browser → Attachment API → S3 / MinIO`。Browser 使用 multipart `file` POST；成功直接回 metadata，唔需要 initiate/complete。Download GET 直接 stream S3 bytes，唔簽發 URL 或 redirect。Delete 即時 detach，S3 object 由 cleanup 刪除。
+All traffic follows `Browser → Attachment API → S3 / MinIO`. The browser sends a multipart `file` POST and receives metadata when it succeeds. There is no initiate/complete exchange. Download GET streams bytes through the API without a storage URL or redirect. Delete detaches metadata immediately; cleanup removes the stored object.
 
-1. Nest FileInterceptor 以 memory storage 接收一個 file，global size limit 預設 20 MiB；唔寫入 local filesystem。
-2. Service 驗證 field、MIME type、實際 bytes、field limit、parent record，持久保存 pending metadata。
-3. Backend PUT object 去 private S3 key，最多五分鐘，失敗回 503；pending row 保留作 cleanup。
-4. 成功後鎖 parent 同 attachment row，在 transaction 內將 pending 轉 ready；single field 舊附件同時轉 deleted，multiple field append。
-5. GET 每次先驗證 resource/record/field/attachment 同 ready status，再從 S3 stream response；資料唔會整個 buffer 喺 backend 記憶體。
+1. Nest's FileInterceptor receives one file in memory, subject to the global limit, which defaults to 20 MiB. It does not write to the local filesystem.
+2. The service validates the field, MIME type, actual size, field limit, and parent record, then persists pending metadata.
+3. The backend uploads the object to a private S3 key with a five-minute timeout. Failure returns 503, retaining the pending row for cleanup.
+4. On success, a transaction locks the parent and attachment row and changes pending to ready. For single fields, the previous attachment becomes deleted; multiple fields append.
+5. GET validates ownership and ready status, then streams S3 content. Downloads do not buffer the entire file in backend memory.
 
-上傳目前會將完整 file 暫存在記憶體，受 `ATTACHMENT_MAX_BYTES` 限制；並發上傳時需預留相應 RAM。反向代理嘅 request body size／timeout 亦要配合設定。下載以 stream 傳送；中途 storage/network failure 會中止 response，client 應重試。暫未提供 HTTP Range/resumable upload。
+Uploads currently buffer the complete file, bounded by `ATTACHMENT_MAX_BYTES`. Allow enough RAM for concurrent uploads and configure reverse-proxy body limits and timeouts accordingly. Downloads stream; a storage/network failure after streaming begins terminates the response, and clients should retry. HTTP Range and resumable uploads are not implemented.
 
-SQL 同 S3 並非跨系統 transaction：S3 成功但 SQL commit 失敗時，pending row 留俾 cleanup。Parent 喺上傳期間被刪除時，finalization 會失敗，已寫 object 同樣由 cleanup 移除。Single replacement 只會喺新附件 ready 時發生，唔會因為上傳失敗刪除舊附件。
+SQL and S3 are not a distributed transaction. If S3 succeeds but the database commit fails, pending metadata remains for cleanup. If the parent is deleted during upload, finalization fails and cleanup removes the object. A single attachment is replaced only when its successor becomes ready, so failed uploads do not discard the existing attachment.
 
-保留既有 attachment table schema，無需 migration：新 row `stagingKey` 為空，`expiresAt` 記錄 pending 建立時間供 cleanup 使用。舊 ready attachments 保留 key，可繼續經新 API 讀取。舊 presigned URL 會按原期限過期，唔會再發出新 URL。
+The existing attachment table is retained without a migration. New rows have an empty `stagingKey`; `expiresAt` records pending creation time for cleanup. Existing ready attachments keep their keys and remain readable through the API. Previously issued presigned URLs expire normally; new ones are not issued.
 
 ## Cleanup
 
+In an installed application, inject the exported `AttachmentService` into a scheduled job and call `cleanup()`. Check its `failures` array and retry failed rows. The library does not install a scheduler or copy the repository's CLI scripts into the host application.
+
+For the repository demo:
+
 ```sh
 npm run storage:cleanup
-# compiled deployment
+# For a compiled deployment:
 node dist/scripts/cleanup.js
 ```
 
-由 scheduler/cron 定時執行，例如每 15 分鐘；本專案唔會自動安裝 cron。處理 `expiresAt` 已過至少一小時嘅 rows，避免同 active upload 競爭。Pending/deleted 刪 object 後刪 metadata；失敗保留 row，下次重試，CLI 有 failures 時 exit 1。Ready 只清理舊流程遺留嘅 staging key，唔會刪除正式 object。
+Run cleanup through a scheduler or cron, for example every 15 minutes. This repository does not install a schedule automatically. Cleanup processes rows whose `expiresAt` is at least one hour old, protecting active uploads. Pending/deleted objects are removed before their metadata rows. Failed rows remain for retry, and the CLI exits with code 1 if any operation fails. For ready attachments, only legacy staging objects are removed, never the final object.
 
-MinIO init 保留 `staging/` 一日 expiration lifecycle，兼容舊 upload 可能留下嘅 objects；新 upload 唔會寫 staging。正式 `attachments/` 唔設定 blanket expiration。版本控制 bucket 需另外設定 noncurrent version expiration，因為 DeleteObject 只建立 delete marker。
+MinIO initialization retains a one-day expiration rule for `staging/` to handle objects left by the former direct-upload flow. New uploads do not use staging. Do not apply blanket expiration to `attachments/`. Versioned buckets need a separate noncurrent-version expiration policy because DeleteObject creates a delete marker.
 
-目前 cleanup 係簡單批次 CLI，會 scan 過期 metadata，包括 ready rows；大型部署可改為有 cursor 嘅 batch worker。唔會掃描未記錄於 DB 嘅任意 bucket key，唔好手動刪除 metadata。
+The current cleanup CLI scans eligible metadata, including ready rows. Larger deployments can replace this with a cursor-based batch worker. It does not scan arbitrary bucket objects that have no metadata record; do not manually remove metadata rows.
 
-## AWS S3 配置
+## AWS S3 configuration
 
 ```dotenv
 S3_REGION=ap-east-1
 S3_BUCKET=your-private-cms-bucket
 S3_FORCE_PATH_STYLE=false
-# 省略 S3_ENDPOINT，使用 AWS 預設 endpoint
-# 使用 IAM role 時亦省略 S3_ACCESS_KEY_ID、S3_SECRET_ACCESS_KEY
+# Omit S3_ENDPOINT to use the AWS endpoint.
+# Also omit S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY when using an IAM role.
 ```
 
-Bucket 預先建立，保持 Block Public Access。Backend principal 需要 `attachments/*` 嘅 `s3:PutObject`、`s3:GetObject`、`s3:DeleteObject`；清理舊 staging 時需要 `staging/*` DeleteObject。SSE-KMS 另加相應 KMS permissions。Development root credentials 同 HTTP 只用於本機。
+Create the bucket beforehand and keep Block Public Access enabled. The backend principal needs `s3:PutObject`, `s3:GetObject`, and `s3:DeleteObject` on `attachments/*`, plus DeleteObject on `staging/*` when cleaning legacy objects. SSE-KMS requires corresponding KMS permissions. Development root credentials and plain HTTP are for local use only.
 
-Frontend 同 API same origin 時可設定 `CORS_ORIGINS=`。未設定則沿用 `http://localhost:5173` 預設值。跨 origin frontend 只需設定 backend `CORS_ORIGINS`；browser 唔直接存取 S3，因此 **不需要 S3 bucket／MinIO browser CORS**。
+MIME validation uses the multipart Content-Type. Magic-byte detection, virus scanning, and image resizing are not implemented; add them before marking metadata ready if needed.
 
-MIME validation 使用 multipart Content-Type，未做 magic-byte detection、virus scan、image resize。需要時可喺 metadata ready 前加入處理。
-
-## 參考
+## References
 
 - [NestJS file upload and streaming](https://docs.nestjs.com/techniques/file-upload)
 - [TypeORM EntitySchema](https://typeorm.io/docs/entity/separating-entity-definition/)
 - [TypeORM transactions](https://orkhan.gitbook.io/typeorm/docs/transactions)
-- [MinIO pinned release / source build instructions](https://github.com/minio/minio/releases/tag/RELEASE.2025-10-15T17-29-55Z)
+- [MinIO pinned release and source-build instructions](https://github.com/minio/minio/releases/tag/RELEASE.2025-10-15T17-29-55Z)

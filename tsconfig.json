@@ -10,7 +10,8 @@
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "skipLibCheck": true,
-    "sourceMap": true
+    "sourceMap": true,
+    "declaration": true
   },
   "include": ["src/**/*.ts", "resources/**/*.ts", "scripts/**/*.ts"],
   "exclude": ["node_modules", "dist", "test"]

@@ -12,13 +12,19 @@ import {
   UseInterceptors,
   StreamableFile,
   Header,
+  UseGuards,
+  UseFilters,
 } from "@nestjs/common";
+import { ApiKeyGuard } from "../api-key.guard";
+import { ErrorFilter } from "../error.filter";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { config } from "../config";
 import type { UploadedAttachment } from "./resource.types";
 import { ResourceRegistry } from "./resource.registry";
 import { ResourceService } from "./resource.service";
 @Controller("api")
+@UseGuards(ApiKeyGuard)
+@UseFilters(ErrorFilter)
 export class ResourceController {
   constructor(
     private readonly resources: ResourceService,

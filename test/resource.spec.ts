@@ -1,3 +1,5 @@
+import { join } from "node:path";
+import { loadResources } from "../src/resource/resource.loader";
 import { ResourceRegistry } from "../src/resource/resource.registry";
 import { readConfig } from "../src/config";
 import { parse } from "../src/resource/validation";
@@ -7,7 +9,9 @@ import { SelectQueryBuilder } from "typeorm";
 
 describe("definition and configuration contracts", () => {
   it("exposes JSON schemas and attachment declarations", () => {
-    const registry = new ResourceRegistry();
+    const registry = new ResourceRegistry(
+      loadResources(join(__dirname, "../resources")),
+    );
     const article = registry.describe().find((d) => d.name === "articles")!;
     expect(article.schema.required).toContain("title");
     expect(article.attachments.map((f) => f.field)).toEqual(["cover", "files"]);

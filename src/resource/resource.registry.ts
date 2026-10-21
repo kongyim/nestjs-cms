@@ -1,7 +1,6 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { EntitySchema } from "typeorm";
 import { z } from "zod";
-import { resources } from "./resource.loader";
 import { ResourceDefinition } from "./resource.types";
 export function createEntity(def: ResourceDefinition) {
   return new EntitySchema({
@@ -19,7 +18,7 @@ export function createEntity(def: ResourceDefinition) {
 @Injectable()
 export class ResourceRegistry {
   private readonly definitions = new Map<string, ResourceDefinition>();
-  constructor() {
+  constructor(resources: ResourceDefinition[]) {
     for (const def of resources) {
       if (!/^[a-z][a-z0-9_]*$/.test(def.name) || this.definitions.has(def.name))
         throw new Error(`Invalid/duplicate resource: ${def.name}`);

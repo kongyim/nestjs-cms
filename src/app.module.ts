@@ -1,13 +1,15 @@
 import { Module } from "@nestjs/common";
-import { APP_FILTER, APP_GUARD } from "@nestjs/core";
+import { extname, join } from "node:path";
 import { ResourceModule } from "./resource/resource.module";
-import { ErrorFilter } from "./error.filter";
-import { ApiKeyGuard } from "./api-key.guard";
+import { dataSource } from "./database/data-source";
+
 @Module({
-  imports: [ResourceModule],
-  providers: [
-    { provide: APP_FILTER, useClass: ErrorFilter },
-    { provide: APP_GUARD, useClass: ApiKeyGuard },
+  imports: [
+    ResourceModule.forRoot({
+      resourcesPath: join(__dirname, "../resources"),
+      extension: extname(__filename) as ".ts" | ".js",
+      dataSource,
+    }),
   ],
 })
 export class AppModule {}
