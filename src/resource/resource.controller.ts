@@ -8,7 +8,14 @@ import {
   Post,
   Put,
   Query,
+  UploadedFile,
+  UseInterceptors,
+  StreamableFile,
+  Header,
 } from "@nestjs/common";
+import { FileInterceptor } from "@nestjs/platform-express";
+import { config } from "../config";
+import type { UploadedAttachment } from "../storage/attachment.service";
 import { ResourceRegistry } from "./resource.registry";
 import { ResourceService } from "./resource.service";
 import { AttachmentService } from "../storage/attachment.service";
@@ -60,29 +67,40 @@ export class ResourceController {
   ) {
     return this.resources.delete(resource, id);
   }
-  @Post(":resource/:id/attachments/:field/uploads") upload(
+  @Post(":resource/:id/attachments/:field")
+  @UseInterceptors(
+    FileInterceptor("file", {
+      limits: { fileSize: config.ATTACHMENT_MAX_BYTES, files: 1, fields: 0 },
+    }),
+  )
+  upload(
     @Param("resource") resource: string,
     @Param("id") id: string,
     @Param("field") field: string,
-    @Body() body: unknown,
+    @UploadedFile() file?: UploadedAttachment,
   ) {
-    return this.attachments.initiate(resource, id, field, body);
+    return this.attachments.upload(resource, id, field, file);
   }
-  @Post(":resource/:id/attachments/:field/:attachmentId/complete") complete(
+  @Get(":resource/:id/attachments/:field/:attachmentId")
+  @Header("Cache-Control", "private, no-store")
+  @Header("X-Content-Type-Options", "nosniff")
+  async download(
     @Param("resource") resource: string,
     @Param("id") id: string,
     @Param("field") field: string,
     @Param("attachmentId") aid: string,
   ) {
-    return this.attachments.complete(resource, id, field, aid);
-  }
-  @Get(":resource/:id/attachments/:field/:attachmentId") download(
-    @Param("resource") resource: string,
-    @Param("id") id: string,
-    @Param("field") field: string,
-    @Param("attachmentId") aid: string,
-  ) {
-    return this.attachments.download(resource, id, field, aid);
+    const { attachment, stream } = await this.attachments.download(
+      resource,
+      id,
+      field,
+      aid,
+    );
+    return new StreamableFile(stream, {
+      type: attachment.mimeType,
+      length: attachment.size,
+      disposition: `attachment; filename="download"; filename*=UTF-8''${encodeURIComponent(attachment.name).replace(/['()*]/g, (c) => "%" + c.charCodeAt(0).toString(16))}`,
+    });
   }
   @Delete(":resource/:id/attachments/:field/:attachmentId") remove(
     @Param("resource") resource: string,

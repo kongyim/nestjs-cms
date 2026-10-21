@@ -33,7 +33,7 @@ curl -X POST http://localhost:3000/api/articles \
 - Resource discovery：JSON Schema、可篩選／排序欄位、attachment 設定，供 admin portal 使用。
 - 通用 list/get/create/update/delete，Zod 驗證、分頁、allowlist filters / sort。
 - 六個 lifecycle hooks，before/after hooks 與寫入共享 transaction。
-- Single / multiple attachments：presigned PUT → complete → presigned GET，檔案唔會經 backend filesystem。
+- Single / multiple attachments：multipart upload → backend 寫入 S3；download 經 API stream，唔會經 backend filesystem。
 - PostgreSQL demo/test database；相同 TypeORM definitions 支援 MySQL 8.4。
 - Demo `categories` / `articles`，multilingual JSON、foreign key、hooks 範例。
 - Private MinIO bucket、staging expiration、可重試 cleanup、portable initial migration。
@@ -60,7 +60,7 @@ docker compose --profile mysql up -d mysql
 DB_TYPE=mysql DB_PORT=3307 npm run test:integration
 ```
 
-Docker 初始化時建立 `cms_test`；若使用已有 volume，請自行建立該 test database 並授權 cms user。Integration tests 透過 migration 建表，以實際 SQL database 及 MinIO 測試 HTTP API、hooks rollback、直接上傳、signed download、replacement、cross-record 拒絕及 cleanup。測試會建立並清理自己嘅 records。
+Docker 初始化時建立 `cms_test`；若使用已有 volume，請自行建立該 test database 並授權 cms user。Integration tests 透過 migration 建表，以實際 SQL database 及 MinIO 測試 HTTP API、hooks rollback、multipart API 上傳、API streaming download、replacement、cross-record 拒絕及 cleanup。測試會建立並清理自己嘅 records。
 
 ## 範圍
 

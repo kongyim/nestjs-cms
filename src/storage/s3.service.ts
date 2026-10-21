@@ -1,18 +1,17 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, ServiceUnavailableException } from "@nestjs/common";
 import {
   S3Client,
   PutObjectCommand,
-  HeadObjectCommand,
-  CopyObjectCommand,
   GetObjectCommand,
   DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { Readable } from "node:stream";
 import { config } from "../config";
 @Injectable()
 export class S3Service {
-  private options = {
+  private client = new S3Client({
     region: config.S3_REGION,
+    endpoint: config.S3_ENDPOINT,
     forcePathStyle: config.S3_FORCE_PATH_STYLE,
     ...(config.S3_ACCESS_KEY_ID
       ? {
@@ -22,56 +21,37 @@ export class S3Service {
           },
         }
       : {}),
-    requestChecksumCalculation: "WHEN_REQUIRED" as const,
-  };
-  private client = new S3Client({
-    ...this.options,
-    endpoint: config.S3_ENDPOINT,
+    requestChecksumCalculation: "WHEN_REQUIRED",
   });
-  private signer = new S3Client({
-    ...this.options,
-    endpoint: config.S3_PUBLIC_ENDPOINT ?? config.S3_ENDPOINT,
-  });
-  async uploadUrl(key: string, mimeType: string, size: number) {
-    return getSignedUrl(
-      this.signer,
-      new PutObjectCommand({
-        Bucket: config.S3_BUCKET,
-        Key: key,
-        ContentType: mimeType,
-        ContentLength: size,
-      }),
-      {
-        expiresIn: config.S3_URL_TTL_SECONDS,
-        signableHeaders: new Set(["content-type", "content-length"]),
-      },
-    );
+  async upload(key: string, body: Buffer, mimeType: string) {
+    try {
+      await this.client.send(
+        new PutObjectCommand({
+          Bucket: config.S3_BUCKET,
+          Key: key,
+          Body: body,
+          ContentType: mimeType,
+          ContentLength: body.length,
+        }),
+        { abortSignal: AbortSignal.timeout(5 * 60 * 1000) },
+      );
+    } catch {
+      throw new ServiceUnavailableException(
+        "Object storage upload unavailable",
+      );
+    }
   }
-  head(key: string) {
-    return this.client.send(
-      new HeadObjectCommand({ Bucket: config.S3_BUCKET, Key: key }),
-    );
-  }
-  copy(source: string, key: string, etag: string) {
-    return this.client.send(
-      new CopyObjectCommand({
-        Bucket: config.S3_BUCKET,
-        Key: key,
-        CopySource: `${config.S3_BUCKET}/${source.split("/").map(encodeURIComponent).join("/")}`,
-        CopySourceIfMatch: etag,
-      }),
-    );
-  }
-  async downloadUrl(key: string, name: string) {
-    return getSignedUrl(
-      this.signer,
-      new GetObjectCommand({
-        Bucket: config.S3_BUCKET,
-        Key: key,
-        ResponseContentDisposition: `attachment; filename="download"; filename*=UTF-8''${encodeURIComponent(name).replace(/['()*]/g, (c) => "%" + c.charCodeAt(0).toString(16))}`,
-      }),
-      { expiresIn: config.S3_URL_TTL_SECONDS },
-    );
+  async download(key: string): Promise<Readable> {
+    try {
+      const result = await this.client.send(
+        new GetObjectCommand({ Bucket: config.S3_BUCKET, Key: key }),
+      );
+      if (!(result.Body instanceof Readable))
+        throw new Error("Missing object stream");
+      return result.Body;
+    } catch {
+      throw new ServiceUnavailableException("Attachment content unavailable");
+    }
   }
   async remove(key: string) {
     await this.client.send(
@@ -80,6 +60,5 @@ export class S3Service {
   }
   onModuleDestroy() {
     this.client.destroy();
-    this.signer.destroy();
   }
 }

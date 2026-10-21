@@ -16,13 +16,11 @@
 | DB_SYNCHRONIZE                          | 只用於 development；production 啟用會 fail fast                         |
 | S3_REGION / S3_BUCKET                   | S3 region 及已存在 private bucket                                       |
 | S3_ENDPOINT                             | MinIO / S3-compatible endpoint；AWS S3 可省略                           |
-| S3_PUBLIC_ENDPOINT                      | Browser 可接達嘅 endpoint，預設等同 S3_ENDPOINT                         |
 | S3_FORCE_PATH_STYLE                     | MinIO 用 true，AWS S3 通常 false                                        |
 | S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY | 要同時提供；兩者省略時使用 AWS credential chain / IAM role              |
-| S3_URL_TTL_SECONDS                      | 預設 300，範圍 30–3600                                                  |
 | ATTACHMENT_MAX_BYTES                    | 預設 20 MiB；最大 1 GiB，field maxBytes 可以再收窄                      |
 
-API 喺 host 跑時 `.env.example` endpoint 係 `http://127.0.0.1:9000`。若之後將 API 放入同一 compose network，internal endpoint 設 `http://minio:9000`，public endpoint 維持 browser 可接達地址。唔可以簽完 URL 後自行替換 hostname，會破壞 signature。
+API 喺 host 跑時 `.env.example` endpoint 係 `http://127.0.0.1:9000`。如果 API 放入 compose network，設 `S3_ENDPOINT=http://minio:9000`。呢個 endpoint 只需 backend 接達；browser 唔會直接連接 S3／MinIO。已移除 `S3_PUBLIC_ENDPOINT` 同 `S3_URL_TTL_SECONDS` 設定。
 
 ## PostgreSQL / MySQL
 
@@ -67,17 +65,21 @@ node node_modules/typeorm/cli.js migration:run -d dist/src/database/data-source.
 npm start
 ```
 
-## S3 upload lifecycle
+## Attachment lifecycle
 
-1. Initiate：驗證 resource、record、field、檔名、size、MIME；建立 pending metadata，簽發 staging PUT。
-2. Client：直接 PUT 原始 bytes 去 S3，backend 唔接收 file body。
-3. Complete：鎖 parent，驗證 pending ownership／expiry；HEAD size/type；以 ETag conditional copy 複製到正式 key；更新 ready metadata。
-4. Download：只為 ready 附件簽發短期 GET URL。
-5. Delete／replace：transaction 內標記 deleted，立即從 API 輸出移除，cleanup 處理物件刪除。
+所有附件流量：`Browser → Attachment API → S3 / MinIO`。Browser 使用 multipart `file` POST；成功直接回 metadata，唔需要 initiate/complete。Download GET 直接 stream S3 bytes，唔簽發 URL 或 redirect。Delete 即時 detach，S3 object 由 cleanup 刪除。
 
-Single replacement 同 multiple append 都鎖同一 parent，避免同時完成時 lost updates。Complete 重試同一 ready ID 會回 metadata。已取代／刪除嘅 ID 不能重新 complete。
+1. Nest FileInterceptor 以 memory storage 接收一個 file，global size limit 預設 20 MiB；唔寫入 local filesystem。
+2. Service 驗證 field、MIME type、實際 bytes、field limit、parent record，持久保存 pending metadata。
+3. Backend PUT object 去 private S3 key，最多五分鐘，失敗回 503；pending row 保留作 cleanup。
+4. 成功後鎖 parent 同 attachment row，在 transaction 內將 pending 轉 ready；single field 舊附件同時轉 deleted，multiple field append。
+5. GET 每次先驗證 resource/record/field/attachment 同 ready status，再從 S3 stream response；資料唔會整個 buffer 喺 backend 記憶體。
 
-S3 與 SQL 無分散式 transaction。Copy 成功但 SQL rollback 時，pending metadata 仍保留，cleanup 會刪除 staging 同 final key。S3 delete 成功但 SQL commit 失敗時，重試 delete 仍然 idempotent。唔會喺 SQL transaction 完成前永久刪除被取代物件。
+上傳目前會將完整 file 暫存在記憶體，受 `ATTACHMENT_MAX_BYTES` 限制；並發上傳時需預留相應 RAM。反向代理嘅 request body size／timeout 亦要配合設定。下載以 stream 傳送；中途 storage/network failure 會中止 response，client 應重試。暫未提供 HTTP Range/resumable upload。
+
+SQL 同 S3 並非跨系統 transaction：S3 成功但 SQL commit 失敗時，pending row 留俾 cleanup。Parent 喺上傳期間被刪除時，finalization 會失敗，已寫 object 同樣由 cleanup 移除。Single replacement 只會喺新附件 ready 時發生，唔會因為上傳失敗刪除舊附件。
+
+保留既有 attachment table schema，無需 migration：新 row `stagingKey` 為空，`expiresAt` 記錄 pending 建立時間供 cleanup 使用。舊 ready attachments 保留 key，可繼續經新 API 讀取。舊 presigned URL 會按原期限過期，唔會再發出新 URL。
 
 ## Cleanup
 
@@ -87,11 +89,11 @@ npm run storage:cleanup
 node dist/scripts/cleanup.js
 ```
 
-請由 scheduler/cron 定時執行，例如每 15 分鐘；本專案唔會自動安裝 cron。處理過期至少一小時嘅 metadata：ready 只清 staging；pending/deleted 清 staging + final object，成功後刪 metadata。失敗保留 row，下次重試；CLI 有 failures 時 exit code 1。
+由 scheduler/cron 定時執行，例如每 15 分鐘；本專案唔會自動安裝 cron。處理 `expiresAt` 已過至少一小時嘅 rows，避免同 active upload 競爭。Pending/deleted 刪 object 後刪 metadata；失敗保留 row，下次重試，CLI 有 failures 時 exit 1。Ready 只清理舊流程遺留嘅 staging key，唔會刪除正式 object。
 
-即使完成 upload，staging key 都保留至 URL 過期加 grace period，避免 presigned URL 重用產生遺留物件。MinIO init 已加 `staging/` 一日 expiration lifecycle；AWS bucket 亦應設定同樣 rule，覆蓋極慢／遲完成 upload。正式 `attachments/` 唔設定 blanket expiration。版本控制 bucket 要另外設定 noncurrent version expiration，因為 DeleteObject 只建立 delete marker。
+MinIO init 保留 `staging/` 一日 expiration lifecycle，兼容舊 upload 可能留下嘅 objects；新 upload 唔會寫 staging。正式 `attachments/` 唔設定 blanket expiration。版本控制 bucket 需另外設定 noncurrent version expiration，因為 DeleteObject 只建立 delete marker。
 
-目前 cleanup 係簡單批次 CLI，會 scan 過期 metadata，包括 ready rows；大型部署可改為有 cursor 嘅 batch worker。Cleanup service 唔自動掃描未記錄於 DB 嘅任意 bucket key；不要手動刪 metadata 或改寫 storage prefix。
+目前 cleanup 係簡單批次 CLI，會 scan 過期 metadata，包括 ready rows；大型部署可改為有 cursor 嘅 batch worker。唔會掃描未記錄於 DB 嘅任意 bucket key，唔好手動刪除 metadata。
 
 ## AWS S3 配置
 
@@ -99,33 +101,19 @@ node dist/scripts/cleanup.js
 S3_REGION=ap-east-1
 S3_BUCKET=your-private-cms-bucket
 S3_FORCE_PATH_STYLE=false
-# 省略 S3_ENDPOINT、S3_PUBLIC_ENDPOINT
+# 省略 S3_ENDPOINT，使用 AWS 預設 endpoint
 # 使用 IAM role 時亦省略 S3_ACCESS_KEY_ID、S3_SECRET_ACCESS_KEY
 ```
 
-Bucket 需預先建立，保持 Block Public Access。Runtime principal 要有 bucket `staging/*` 同 `attachments/*` 嘅 `s3:PutObject`、`s3:GetObject`、`s3:DeleteObject`；copy 需要 source GetObject 同 destination PutObject。使用 SSE-KMS 時另加對應 KMS permissions。S3 相容服務必須支援 HEAD、conditional CopyObject 同 SigV4 signed PUT/GET。
+Bucket 預先建立，保持 Block Public Access。Backend principal 需要 `attachments/*` 嘅 `s3:PutObject`、`s3:GetObject`、`s3:DeleteObject`；清理舊 staging 時需要 `staging/*` DeleteObject。SSE-KMS 另加相應 KMS permissions。Development root credentials 同 HTTP 只用於本機。
 
-AWS bucket CORS 範例（換成真實 admin origin）：
+Frontend 同 API same origin 時可設定 `CORS_ORIGINS=`。未設定則沿用 `http://localhost:5173` 預設值。跨 origin frontend 只需設定 backend `CORS_ORIGINS`；browser 唔直接存取 S3，因此 **不需要 S3 bucket／MinIO browser CORS**。
 
-```json
-[
-  {
-    "AllowedOrigins": ["https://admin.example.com"],
-    "AllowedMethods": ["PUT", "GET", "HEAD"],
-    "AllowedHeaders": ["content-type", "content-length", "x-amz-*"],
-    "ExposeHeaders": ["ETag"],
-    "MaxAgeSeconds": 3600
-  }
-]
-```
-
-本機 MinIO 透過 compose `MINIO_API_CORS_ALLOW_ORIGIN` 配置 origins；要同步修改 backend `CORS_ORIGINS`。Development root credentials 同 local HTTP 只用喺本機，正式環境使用 HTTPS 同有範圍限制嘅 IAM principal。
-
-Attachment MIME type 係 client 宣告後經 HEAD 比對，未做 magic-byte detection、virus scan、image resize 或 multipart upload。需要呢啲能力時可喺 staging → ready 之間加入處理。單次 PUT 適合本次 20 MiB 預設上限。
+MIME validation 使用 multipart Content-Type，未做 magic-byte detection、virus scan、image resize。需要時可喺 metadata ready 前加入處理。
 
 ## 參考
 
+- [NestJS file upload and streaming](https://docs.nestjs.com/techniques/file-upload)
 - [TypeORM EntitySchema](https://typeorm.io/docs/entity/separating-entity-definition/)
 - [TypeORM transactions](https://orkhan.gitbook.io/typeorm/docs/transactions)
-- [AWS presigned upload semantics](https://docs.aws.amazon.com/AmazonS3/latest/userguide/PresignedUrlUploadObject.html)：signed URL 可喺有效期內重用，同 key 會覆寫，所以本設計將 staging 同正式 key 分開。
 - [MinIO pinned release / source build instructions](https://github.com/minio/minio/releases/tag/RELEASE.2025-10-15T17-29-55Z)

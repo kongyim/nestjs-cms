@@ -2,7 +2,7 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
-  ServiceUnavailableException,
+  PayloadTooLargeException,
 } from "@nestjs/common";
 import { DataSource } from "typeorm";
 import { randomUUID } from "node:crypto";
@@ -13,6 +13,11 @@ import { ResourceService } from "../resource/resource.service";
 import { parse, recordId } from "../resource/validation";
 import { AttachmentEntity, attachmentMetadata } from "./attachment.entity";
 import { S3Service } from "./s3.service";
+export interface UploadedAttachment {
+  originalname: string;
+  mimetype: string;
+  buffer: Buffer;
+}
 @Injectable()
 export class AttachmentService {
   constructor(
@@ -28,121 +33,82 @@ export class AttachmentService {
     if (!definition) throw new BadRequestException("Unknown attachment field");
     return definition;
   }
-  async initiate(resource: string, id: string, field: string, body: unknown) {
+  async upload(
+    resource: string,
+    id: string,
+    field: string,
+    file?: UploadedAttachment,
+  ) {
     const definition = this.field(resource, field);
+    if (!file?.buffer)
+      throw new BadRequestException("A multipart file field is required");
+    const maxBytes = Math.min(
+      definition.maxBytes ?? config.ATTACHMENT_MAX_BYTES,
+      config.ATTACHMENT_MAX_BYTES,
+    );
+    if (file.buffer.length > maxBytes)
+      throw new PayloadTooLargeException("Attachment exceeds field size limit");
     const input = parse(
-      z
-        .object({
-          name: z
-            .string()
-            .trim()
-            .min(1)
-            .max(255)
-            .refine(
-              (v) => !/[\x00-\x1f\x7f/\\]/.test(v),
-              "Use a filename without path or control characters",
-            ),
-          mimeType: z
-            .string()
-            .max(120)
-            .refine(
-              (v) => definition.mimeTypes.includes(v),
-              "Unsupported MIME type",
-            ),
-          size: z
-            .number()
-            .int()
-            .min(1)
-            .max(
-              Math.min(
-                definition.maxBytes ?? config.ATTACHMENT_MAX_BYTES,
-                config.ATTACHMENT_MAX_BYTES,
-              ),
-            ),
-        })
-        .strict(),
-      body,
+      z.object({
+        name: z
+          .string()
+          .trim()
+          .min(1)
+          .max(255)
+          .refine((v) => !/[\x00-\x1f\x7f/\\]/.test(v), "Invalid filename"),
+        mimeType: z
+          .string()
+          .max(120)
+          .refine(
+            (v) => definition.mimeTypes.includes(v),
+            "Unsupported MIME type",
+          ),
+        size: z.number().int().min(1),
+      }),
+      {
+        name: file.originalname,
+        mimeType: file.mimetype,
+        size: file.buffer.length,
+      },
     );
     const attachmentId = randomUUID();
-    const stagingKey = `staging/${attachmentId}`;
     const key = `attachments/${resource}/${id}/${field}/${attachmentId}`;
-    const expiresAt = new Date(Date.now() + config.S3_URL_TTL_SECONDS * 1000);
-    const url = await this.s3.uploadUrl(stagingKey, input.mimeType, input.size);
+    // Retain the existing storage schema so previously stored attachments remain readable.
+    // New uploads never use a staging object or issue browser-accessible storage URLs.
     await this.db.transaction(async (manager) => {
       await this.records.find(manager, resource, id, true);
-      await manager.getRepository(AttachmentEntity).save({
+      return manager.getRepository(AttachmentEntity).save({
         id: attachmentId,
         resource,
         recordId: id,
         field,
         ...input,
-        stagingKey,
         key,
-        expiresAt,
+        stagingKey: "",
+        expiresAt: new Date(),
         status: "pending",
       });
     });
-    return {
-      id: attachmentId,
-      method: "PUT",
-      url,
-      headers: { "Content-Type": input.mimeType },
-      expiresAt,
-    };
-  }
-  async complete(
-    resource: string,
-    id: string,
-    field: string,
-    attachmentId: string,
-  ) {
-    const definition = this.field(resource, field);
-    recordId(attachmentId);
+    // Persist pending metadata before writing S3 so failures remain discoverable by cleanup.
+    // Upload is bounded to five minutes; cleanup only considers pending rows after one hour.
+    await this.s3.upload(key, file.buffer, input.mimeType);
     return this.db.transaction(async (manager) => {
-      // All mutation paths lock the parent first to serialize replacements, deletes and completions.
       await this.records.find(manager, resource, id, true);
       const repo = manager.getRepository(AttachmentEntity);
-      const attachment = await repo.findOne({
-        where: { id: attachmentId, resource, recordId: id, field },
+      const current = await repo.findOne({
+        where: { id: attachmentId },
         lock: { mode: "pessimistic_write" },
       });
-      if (!attachment || attachment.status === "deleted")
-        throw new NotFoundException("Upload not found");
-      if (attachment.status === "ready") return attachmentMetadata(attachment);
-      if (attachment.expiresAt.getTime() <= Date.now())
-        throw new BadRequestException("Upload expired; request a new upload");
-      let head;
-      try {
-        head = await this.s3.head(attachment.stagingKey);
-      } catch (error) {
-        if (
-          (error as { $metadata?: { httpStatusCode?: number } }).$metadata
-            ?.httpStatusCode === 404
-        )
-          throw new BadRequestException(
-            "Upload has not reached object storage",
-          );
-        throw new ServiceUnavailableException("Object storage unavailable");
-      }
-      if (
-        head.ContentLength !== attachment.size ||
-        head.ContentType !== attachment.mimeType ||
-        !head.ETag
-      )
-        throw new BadRequestException(
-          "Uploaded object size or MIME type does not match",
-        );
-      // The final key is never exposed for upload. ETag precondition prevents a HEAD/copy race.
-      await this.s3.copy(attachment.stagingKey, attachment.key, head.ETag);
+      if (!current || current.status !== "pending")
+        throw new NotFoundException("Upload no longer available");
       if (!definition.multiple)
         await repo.update(
           { resource, recordId: id, field, status: "ready" },
           { status: "deleted" },
         );
-      attachment.status = "ready";
-      await repo.save(attachment);
-      // Staging remains until expiry, because a presigned URL can be replayed before then.
-      return attachmentMetadata(attachment);
+      current.status = "ready";
+      await repo.save(current);
+      return attachmentMetadata(current);
     });
   }
   async download(
@@ -162,11 +128,7 @@ export class AttachmentService {
       status: "ready",
     });
     if (!attachment) throw new NotFoundException("Attachment not found");
-    return {
-      ...attachmentMetadata(attachment),
-      url: await this.s3.downloadUrl(attachment.key, attachment.name),
-      expiresIn: config.S3_URL_TTL_SECONDS,
-    };
+    return { attachment, stream: await this.s3.download(attachment.key) };
   }
   async remove(
     resource: string,
@@ -191,7 +153,7 @@ export class AttachmentService {
     return { id: attachmentId, deleted: true };
   }
   async cleanup() {
-    // Grace period covers slow in-flight uploads. Also configure a staging/ lifecycle policy.
+    // Grace period protects active uploads; legacy staging objects are also cleaned up.
     const cutoff = new Date(Date.now() - 60 * 60 * 1000);
     const candidates = await this.db
       .getRepository(AttachmentEntity)
@@ -209,7 +171,7 @@ export class AttachmentService {
             lock: { mode: "pessimistic_write" },
           });
           if (!current) return;
-          await this.s3.remove(current.stagingKey);
+          if (current.stagingKey) await this.s3.remove(current.stagingKey);
           if (current.status !== "ready") {
             await this.s3.remove(current.key);
             await repo.delete({ id: current.id });

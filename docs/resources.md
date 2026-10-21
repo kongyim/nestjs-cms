@@ -86,7 +86,7 @@ const hook = async ({ manager, record, id }) => {
 
 上述 `audit_logs` 需自行定義 table。所有 hook DB 操作必須用 context manager；唔好使用 global repository，否則操作唔屬於同一 transaction。任一 hook 拋錯，CRUD 同 manager 寫入都 rollback。Update/delete 鎖住 parent record；同一 record 嘅 attachment mutation 亦用相同鎖。After hooks 係 **after write, before commit**，唔係 after commit；email、webhook 等不可 rollback 外部動作應使用 transactional outbox，唔好直接喺 hook 發送。
 
-Attachment initiate/complete/remove 不會觸發 CRUD hooks，也不會更新 parent `updatedAt`。Attachment storage 操作使用獨立 service，metadata transaction 同 S3 並非跨系統 atomic transaction，失敗時保留 pending/deleted rows 俾 cleanup 重試。
+Attachment upload/download/remove 不會觸發 CRUD hooks，也不會更新 parent `updatedAt`。Attachment storage 操作使用獨立 service，metadata transaction 同 S3 並非跨系統 atomic transaction，失敗時保留 pending/deleted rows 俾 cleanup 重試。
 
 ## 舊 project 對照
 
@@ -96,7 +96,7 @@ Attachment initiate/complete/remove 不會觸發 CRUD hooks，也不會更新 pa
 | Prisma `delegate`                       | TypeORM resource table/entity，同時支援 PG/MySQL |
 | `prisma` hook context                   | transactional `manager`                          |
 | `onBeforeCreate` 等六個 hooks           | 保留命名及順序；after hook 在 commit 前          |
-| filesystem attachment、multipart upload | presigned direct PUT + complete + signed GET     |
+| filesystem attachment、multipart upload | multipart API upload + API streaming download    |
 | `fields[].attachment/attachments`       | `attachments: [{ field, multiple, mimeTypes }]`  |
 | 平面 `nameEn/nameTc/nameSc` mapping     | JSON `name: { en, tc, sc }`                      |
 | arbitrary ORM query、limit=all          | allowlisted filters、最多 150 items/page         |

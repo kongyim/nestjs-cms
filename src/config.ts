@@ -19,11 +19,9 @@ const env = z.object({
   S3_REGION: z.string().default("us-east-1"),
   S3_BUCKET: z.string().min(3).default("cms-attachments"),
   S3_ENDPOINT: z.url().optional(),
-  S3_PUBLIC_ENDPOINT: z.url().optional(),
   S3_FORCE_PATH_STYLE: bool.default(false),
   S3_ACCESS_KEY_ID: z.string().optional(),
   S3_SECRET_ACCESS_KEY: z.string().optional(),
-  S3_URL_TTL_SECONDS: z.coerce.number().int().min(30).max(3600).default(300),
   ATTACHMENT_MAX_BYTES: z.coerce
     .number()
     .int()

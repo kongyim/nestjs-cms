@@ -17,7 +17,7 @@ async function main() {
     if (!["BucketAlreadyOwnedByYou", "BucketAlreadyExists"].includes(e.name))
       throw e;
   }
-  // MinIO uses MINIO_API_CORS_ALLOW_ORIGIN; AWS S3 supports per-bucket CORS.
+  // Keep staging expiry for objects uploaded using the previous direct-upload flow.
   await client.send(
     new PutBucketLifecycleConfigurationCommand({
       Bucket,

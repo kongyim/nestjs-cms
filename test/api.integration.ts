@@ -6,7 +6,6 @@ import request from "supertest";
 import { randomUUID } from "node:crypto";
 import {
   S3Client,
-  PutObjectCommand,
   HeadObjectCommand,
   DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
@@ -44,23 +43,14 @@ const upload = async (
   type = "image/png",
 ) => {
   const response = await api()
-    .post(`/api/articles/${articleId}/attachments/${field}/uploads`)
+    .post(`/api/articles/${articleId}/attachments/${field}`)
     .set(auth)
-    .send({ name, mimeType: type, size: file.length })
+    .attach("file", file, { filename: name, contentType: type })
     .expect(201);
-  const put = await fetch(response.body.url, {
-    method: "PUT",
-    headers: response.body.headers,
-    body: file,
-  });
-  expect(put.status).toBe(200);
+  expect(response.body.url).toBeUndefined();
+  expect(response.body.key).toBeUndefined();
   return response.body;
 };
-const complete = (field: string, id: string) =>
-  api()
-    .post(`/api/articles/${articleId}/attachments/${field}/${id}/complete`)
-    .set(auth)
-    .send();
 
 beforeAll(async () => {
   if (config.DB_DATABASE !== "cms_test")
@@ -87,12 +77,13 @@ afterAll(async () => {
           Key: attachment.key,
         }),
       );
-      await s3.send(
-        new DeleteObjectCommand({
-          Bucket: config.S3_BUCKET,
-          Key: attachment.stagingKey,
-        }),
-      );
+      if (attachment.stagingKey)
+        await s3.send(
+          new DeleteObjectCommand({
+            Bucket: config.S3_BUCKET,
+            Key: attachment.stagingKey,
+          }),
+        );
       await db.getRepository(AttachmentEntity).delete(attachment.id);
     }
     for (const id of ids) await db.getRepository("articles").delete({ id });
@@ -223,49 +214,75 @@ it("runs hooks sequentially and rolls back database changes when an after hook f
     def.hooks = original;
   }
 });
-it("uploads directly to MinIO, completes idempotently and downloads privately", async () => {
-  const pending = await upload();
-  coverId = pending.id;
-  await complete("cover", coverId).expect(201);
-  await complete("cover", coverId).expect(201);
+it("uploads and streams bytes only through the authenticated attachment API", async () => {
+  const uploaded = await upload();
+  coverId = uploaded.id;
+  expect(uploaded.size).toBe(file.length);
   const record = await api()
     .get(`/api/articles/${articleId}`)
     .set(auth)
     .expect(200);
   expect(record.body.attachments.cover.id).toBe(coverId);
-  const link = await api()
-    .get(`/api/articles/${articleId}/attachments/cover/${coverId}`)
+  const path = `/api/articles/${articleId}/attachments/cover/${coverId}`;
+  await api().get(path).expect(401);
+  const downloaded = await api().get(path).set(auth).expect(200);
+  expect(downloaded.body).toEqual(file);
+  expect(downloaded.headers["content-type"]).toBe("image/png");
+  expect(Number(downloaded.headers["content-length"])).toBe(file.length);
+  expect(downloaded.headers["content-disposition"]).toContain("attachment;");
+  expect(downloaded.headers["cache-control"]).toBe("private, no-store");
+  expect(downloaded.headers.location).toBeUndefined();
+  await api()
+    .post(`/api/articles/${articleId}/attachments/cover/uploads`)
     .set(auth)
-    .expect(200);
-  const downloaded = await fetch(link.body.url);
-  expect(downloaded.status).toBe(200);
-  expect(Buffer.from(await downloaded.arrayBuffer())).toEqual(file);
-  expect(link.body.key).toBeUndefined();
-  // Replaying the staging PUT never changes the finalized object.
-  const replay = Buffer.alloc(file.length, 65);
-  expect(
-    (
-      await fetch(pending.url, {
-        method: "PUT",
-        headers: pending.headers,
-        body: replay,
-      })
-    ).status,
-  ).toBe(200);
-  expect(Buffer.from(await (await fetch(link.body.url)).arrayBuffer())).toEqual(
-    file,
-  );
+    .send({})
+    .expect(404);
+  await api().post(`${path}/complete`).set(auth).send({}).expect(404);
 });
-it("rejects forged fields, types, sizes, cross-record binding and metadata mismatch", async () => {
+it("rejects missing files, wrong fields, MIME types, excessive sizes and cross-record downloads", async () => {
   const base = `/api/articles/${articleId}/attachments`;
-  for (const body of [
-    { name: "x", mimeType: "text/html", size: 10 },
-    { name: "../x", mimeType: "image/png", size: 10 },
-    { name: "x", mimeType: "image/png", size: 999999999 },
-  ]) {
-    await api().post(`${base}/cover/uploads`).set(auth).send(body).expect(400);
+  await api().post(`${base}/cover`).set(auth).send({}).expect(400);
+  await api()
+    .post(`${base}/cover`)
+    .set(auth)
+    .attach("wrong", file, "test.png")
+    .expect(400);
+  await api()
+    .post(`${base}/cover`)
+    .set(auth)
+    .attach("file", file, { filename: "x.html", contentType: "text/html" })
+    .expect(400);
+  await api()
+    .post(`${base}/cover`)
+    .set(auth)
+    .attach("file", Buffer.alloc(0), {
+      filename: "x.png",
+      contentType: "image/png",
+    })
+    .expect(400);
+  await api()
+    .post(`${base}/invalid`)
+    .set(auth)
+    .attach("file", file, "x.png")
+    .expect(400);
+  await api().post(`${base}/cover`).attach("file", file, "x.png").expect(401);
+  const definition = app.get(ResourceRegistry).get("articles").attachments![0];
+  const original = definition.maxBytes;
+  try {
+    definition.maxBytes = 1;
+    await api()
+      .post(`${base}/cover`)
+      .set(auth)
+      .attach("file", file, "test.png")
+      .expect(413);
+  } finally {
+    definition.maxBytes = original;
   }
-  await api().post(`${base}/invalid/uploads`).set(auth).send({}).expect(400);
+  await api()
+    .post(`${base}/cover`)
+    .set(auth)
+    .attach("file", Buffer.alloc(config.ATTACHMENT_MAX_BYTES + 1), "test.png")
+    .expect(413);
   const another = await api()
     .post("/api/articles")
     .set(auth)
@@ -273,32 +290,41 @@ it("rejects forged fields, types, sizes, cross-record binding and metadata misma
     .expect(201);
   extraIds.push(another.body.id);
   await api()
-    .post(
-      `/api/articles/${another.body.id}/attachments/cover/${coverId}/complete`,
-    )
+    .get(`/api/articles/${another.body.id}/attachments/cover/${coverId}`)
     .set(auth)
     .expect(404);
-  const pending = await upload();
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: config.S3_BUCKET,
-      Key: `staging/${pending.id}`,
-      Body: "bad",
-      ContentType: "image/png",
-    }),
-  );
-  await complete("cover", pending.id).expect(400);
-  await db
-    .getRepository(AttachmentEntity)
-    .update(pending.id, { expiresAt: new Date(0) });
-  await complete("cover", pending.id).expect(400);
+  await api()
+    .delete(`/api/articles/${another.body.id}/attachments/cover/${coverId}`)
+    .set(auth)
+    .expect(404);
+});
+it("keeps old attachments when storage upload fails and retains pending cleanup metadata", async () => {
+  const { ServiceUnavailableException } = await import("@nestjs/common");
+  const spy = jest
+    .spyOn(app.get(S3Service), "upload")
+    .mockRejectedValueOnce(new ServiceUnavailableException("unavailable"));
+  try {
+    await api()
+      .post(`/api/articles/${articleId}/attachments/cover`)
+      .set(auth)
+      .attach("file", file, "test.png")
+      .expect(503);
+  } finally {
+    spy.mockRestore();
+  }
+  const record = await api()
+    .get(`/api/articles/${articleId}`)
+    .set(auth)
+    .expect(200);
+  expect(record.body.attachments.cover.id).toBe(coverId);
+  expect(
+    await db
+      .getRepository(AttachmentEntity)
+      .countBy({ recordId: articleId, status: "pending" }),
+  ).toBe(1);
 });
 it("serializes single replacements and supports multiple attachments", async () => {
-  const [a, b] = await Promise.all([upload(), upload()]);
-  await Promise.all([
-    complete("cover", a.id).expect(201),
-    complete("cover", b.id).expect(201),
-  ]);
+  await Promise.all([upload(), upload()]);
   expect(
     await db.getRepository(AttachmentEntity).countBy({
       resource: "articles",
@@ -307,13 +333,13 @@ it("serializes single replacements and supports multiple attachments", async () 
       status: "ready",
     }),
   ).toBe(1);
-  const [f1, f2] = await Promise.all([
+  await api()
+    .get(`/api/articles/${articleId}/attachments/cover/${coverId}`)
+    .set(auth)
+    .expect(404);
+  const [f1] = await Promise.all([
     upload("files", "a.pdf", "application/pdf"),
     upload("files", "b.pdf", "application/pdf"),
-  ]);
-  await Promise.all([
-    complete("files", f1.id).expect(201),
-    complete("files", f2.id).expect(201),
   ]);
   const record = await api()
     .get(`/api/articles/${articleId}`)
@@ -365,13 +391,14 @@ it("deletes records, queues storage cleanup, and removes expired objects", async
         new HeadObjectCommand({ Bucket: config.S3_BUCKET, Key: file.key }),
       ),
     ).rejects.toMatchObject({ $metadata: { httpStatusCode: 404 } });
-    await expect(
-      s3.send(
-        new HeadObjectCommand({
-          Bucket: config.S3_BUCKET,
-          Key: file.stagingKey,
-        }),
-      ),
-    ).rejects.toMatchObject({ $metadata: { httpStatusCode: 404 } });
+    if (file.stagingKey)
+      await expect(
+        s3.send(
+          new HeadObjectCommand({
+            Bucket: config.S3_BUCKET,
+            Key: file.stagingKey,
+          }),
+        ),
+      ).rejects.toMatchObject({ $metadata: { httpStatusCode: 404 } });
   }
 });
