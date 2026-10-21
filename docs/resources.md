@@ -105,3 +105,32 @@ Attachment upload/download/remove 不會觸發 CRUD hooks，也不會更新 pare
 | products/orders 特例                    | 不移植；按新業務寫 resource hooks                |
 
 唔支援舊 config 直接貼入無修改；呢個係獨立 resource framework。既有資料遷移亦唔喺本次範圍。
+
+## Service attachment API
+
+Controller 同其他業務 service 統一透過 `ResourceService` 管理附件：
+
+```ts
+await resources.createAttachment(resource, recordId, field, {
+  originalname: "photo.png",
+  mimetype: "image/png",
+  buffer,
+});
+const metadata = await resources.findAttachment(
+  resource,
+  recordId,
+  field,
+  attachmentId,
+);
+const { attachment, stream } = await resources.downloadAttachment(
+  resource,
+  recordId,
+  field,
+  attachmentId,
+);
+await resources.removeAttachment(resource, recordId, field, attachmentId);
+```
+
+`createAttachment` / `findAttachment` 回傳 `{ id, name, mimeType, size, createdAt }`；`findAttachment` 只讀 metadata，唔會存取 S3。`downloadAttachment` 回傳相同 metadata 加 Node readable stream，由 controller 處理 HTTP headers／response。`removeAttachment` 回傳 `{ id, deleted: true }`。查找／下載只接受 ready attachments，並驗證 resource、parent record、field 同 attachment ID 嘅關聯；不存在／已刪除回 404。
+
+依賴方向係 `ResourceController → ResourceService → AttachmentService → S3Service`。ResourceService 同 AttachmentService 共用 `ResourceRecordStore` 做 parent lookup／transaction locking，避免 services 相互依賴。Storage cleanup CLI 仍直接使用 AttachmentService，唔屬於 controller request flow。

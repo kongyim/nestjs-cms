@@ -15,16 +15,14 @@ import {
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { config } from "../config";
-import type { UploadedAttachment } from "../storage/attachment.service";
+import type { UploadedAttachment } from "./resource.types";
 import { ResourceRegistry } from "./resource.registry";
 import { ResourceService } from "./resource.service";
-import { AttachmentService } from "../storage/attachment.service";
 @Controller("api")
 export class ResourceController {
   constructor(
     private readonly resources: ResourceService,
     private readonly registry: ResourceRegistry,
-    private readonly attachments: AttachmentService,
   ) {}
   @Get("_resources") describe() {
     return this.registry.describe();
@@ -79,7 +77,7 @@ export class ResourceController {
     @Param("field") field: string,
     @UploadedFile() file?: UploadedAttachment,
   ) {
-    return this.attachments.upload(resource, id, field, file);
+    return this.resources.createAttachment(resource, id, field, file);
   }
   @Get(":resource/:id/attachments/:field/:attachmentId")
   @Header("Cache-Control", "private, no-store")
@@ -90,7 +88,7 @@ export class ResourceController {
     @Param("field") field: string,
     @Param("attachmentId") aid: string,
   ) {
-    const { attachment, stream } = await this.attachments.download(
+    const { attachment, stream } = await this.resources.downloadAttachment(
       resource,
       id,
       field,
@@ -108,6 +106,6 @@ export class ResourceController {
     @Param("field") field: string,
     @Param("attachmentId") aid: string,
   ) {
-    return this.attachments.remove(resource, id, field, aid);
+    return this.resources.removeAttachment(resource, id, field, aid);
   }
 }

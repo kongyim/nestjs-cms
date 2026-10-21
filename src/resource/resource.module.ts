@@ -3,6 +3,7 @@ import { DataSource } from "typeorm";
 import { dataSource } from "../database/data-source";
 import { ResourceController } from "./resource.controller";
 import { ResourceRegistry } from "./resource.registry";
+import { ResourceRecordStore } from "./resource-record.store";
 import { ResourceService } from "./resource.service";
 import { AttachmentService } from "../storage/attachment.service";
 import { S3Service } from "../storage/s3.service";
@@ -15,6 +16,7 @@ import { S3Service } from "../storage/s3.service";
         dataSource.isInitialized ? dataSource : dataSource.initialize(),
     },
     ResourceRegistry,
+    ResourceRecordStore,
     ResourceService,
     AttachmentService,
     S3Service,

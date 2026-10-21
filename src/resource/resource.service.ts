@@ -1,10 +1,13 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { DataSource, EntityManager, In } from "typeorm";
 import { randomUUID } from "node:crypto";
 import { ResourceRegistry } from "./resource.registry";
 import { HookAction, RecordData, ResourceDefinition } from "./resource.types";
-import { parse, recordId } from "./validation";
+import { parse } from "./validation";
 import { applyQuery } from "./query";
+import { ResourceRecordStore } from "./resource-record.store";
+import { AttachmentService } from "../storage/attachment.service";
+import type { UploadedAttachment } from "./resource.types";
 import {
   AttachmentEntity,
   attachmentMetadata,
@@ -14,16 +17,43 @@ export class ResourceService {
   constructor(
     private readonly db: DataSource,
     private readonly registry: ResourceRegistry,
+    private readonly records: ResourceRecordStore,
+    private readonly attachments: AttachmentService,
   ) {}
   async find(manager: EntityManager, name: string, id: string, lock = false) {
-    this.registry.get(name);
-    recordId(id);
-    const record = await manager.getRepository(name).findOne({
-      where: { id },
-      ...(lock ? { lock: { mode: "pessimistic_write" as const } } : {}),
-    });
-    if (!record) throw new NotFoundException("Record not found");
-    return record;
+    return this.records.find(manager, name, id, lock);
+  }
+  createAttachment(
+    name: string,
+    id: string,
+    field: string,
+    file?: UploadedAttachment,
+  ) {
+    return this.attachments.upload(name, id, field, file);
+  }
+  findAttachment(
+    name: string,
+    id: string,
+    field: string,
+    attachmentId: string,
+  ) {
+    return this.attachments.find(name, id, field, attachmentId);
+  }
+  downloadAttachment(
+    name: string,
+    id: string,
+    field: string,
+    attachmentId: string,
+  ) {
+    return this.attachments.download(name, id, field, attachmentId);
+  }
+  removeAttachment(
+    name: string,
+    id: string,
+    field: string,
+    attachmentId: string,
+  ) {
+    return this.attachments.remove(name, id, field, attachmentId);
   }
   private async present(
     manager: EntityManager,

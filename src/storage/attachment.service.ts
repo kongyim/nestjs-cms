@@ -9,21 +9,17 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { config } from "../config";
 import { ResourceRegistry } from "../resource/resource.registry";
-import { ResourceService } from "../resource/resource.service";
+import { ResourceRecordStore } from "../resource/resource-record.store";
+import type { UploadedAttachment } from "./attachment.types";
 import { parse, recordId } from "../resource/validation";
 import { AttachmentEntity, attachmentMetadata } from "./attachment.entity";
 import { S3Service } from "./s3.service";
-export interface UploadedAttachment {
-  originalname: string;
-  mimetype: string;
-  buffer: Buffer;
-}
 @Injectable()
 export class AttachmentService {
   constructor(
     private readonly db: DataSource,
     private readonly registry: ResourceRegistry,
-    private readonly records: ResourceService,
+    private readonly records: ResourceRecordStore,
     private readonly s3: S3Service,
   ) {}
   private field(resource: string, field: string) {
@@ -111,7 +107,7 @@ export class AttachmentService {
       return attachmentMetadata(current);
     });
   }
-  async download(
+  private async findRecord(
     resource: string,
     id: string,
     field: string,
@@ -128,7 +124,29 @@ export class AttachmentService {
       status: "ready",
     });
     if (!attachment) throw new NotFoundException("Attachment not found");
-    return { attachment, stream: await this.s3.download(attachment.key) };
+    return attachment;
+  }
+  async find(
+    resource: string,
+    id: string,
+    field: string,
+    attachmentId: string,
+  ) {
+    return attachmentMetadata(
+      await this.findRecord(resource, id, field, attachmentId),
+    );
+  }
+  async download(
+    resource: string,
+    id: string,
+    field: string,
+    attachmentId: string,
+  ) {
+    const attachment = await this.findRecord(resource, id, field, attachmentId);
+    return {
+      attachment: attachmentMetadata(attachment),
+      stream: await this.s3.download(attachment.key),
+    };
   }
   async remove(
     resource: string,

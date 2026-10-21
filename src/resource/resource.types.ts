@@ -47,3 +47,5 @@ export function defineResource(
 ): ResourceDefinition {
   return definition;
 }
+
+export type { UploadedAttachment } from "../storage/attachment.types";

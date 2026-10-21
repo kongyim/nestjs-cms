@@ -12,6 +12,7 @@ import {
 import { AppModule } from "../src/app.module";
 import { dataSource } from "../src/database/data-source";
 import { config } from "../src/config";
+import { ResourceService } from "../src/resource/resource.service";
 import { ResourceRegistry } from "../src/resource/resource.registry";
 import { AttachmentEntity } from "../src/storage/attachment.entity";
 import { S3Service } from "../src/storage/s3.service";
@@ -273,6 +274,29 @@ it("uploads and streams bytes only through the authenticated attachment API", as
   const uploaded = await upload();
   coverId = uploaded.id;
   expect(uploaded.size).toBe(file.length);
+  const storageRead = jest.spyOn(app.get(S3Service), "download");
+  try {
+    const metadata = await app
+      .get(ResourceService)
+      .findAttachment("articles", articleId, "cover", coverId);
+    expect(metadata.id).toBe(coverId);
+    expect(metadata.size).toBe(file.length);
+    expect(Object.keys(metadata).sort()).toEqual([
+      "createdAt",
+      "id",
+      "mimeType",
+      "name",
+      "size",
+    ]);
+    expect(storageRead).not.toHaveBeenCalled();
+  } finally {
+    storageRead.mockRestore();
+  }
+  await expect(
+    app
+      .get(ResourceService)
+      .findAttachment("articles", articleId, "cover", randomUUID()),
+  ).rejects.toMatchObject({ status: 404 });
   const record = await api()
     .get(`/api/articles/${articleId}`)
     .set(auth)
@@ -344,6 +368,11 @@ it("rejects missing files, wrong fields, MIME types, excessive sizes and cross-r
     .send({ slug: `${prefix}-other`, title: "Other" })
     .expect(201);
   extraIds.push(another.body.id);
+  await expect(
+    app
+      .get(ResourceService)
+      .findAttachment("articles", another.body.id, "cover", coverId),
+  ).rejects.toMatchObject({ status: 404 });
   await api()
     .get(`/api/articles/${another.body.id}/attachments/cover/${coverId}`)
     .set(auth)
@@ -405,6 +434,11 @@ it("serializes single replacements and supports multiple attachments", async () 
     .delete(`/api/articles/${articleId}/attachments/files/${f1.id}`)
     .set(auth)
     .expect(200);
+  await expect(
+    app
+      .get(ResourceService)
+      .findAttachment("articles", articleId, "files", f1.id),
+  ).rejects.toMatchObject({ status: 404 });
   await api()
     .get(`/api/articles/${articleId}/attachments/files/${f1.id}`)
     .set(auth)
