@@ -9,8 +9,8 @@ Requires Node.js 22+, npm, and a PostgreSQL database. The package supports NestJ
 ### 1. Create a NestJS project and install the package
 
 ```sh
-npx @nestjs/cli@11 new my-cms --package-manager npm
-cd my-cms
+npx @nestjs/cli@11 new nestjs-cms-demo --package-manager npm
+cd nestjs-cms-demo
 npm install git+ssh://git@github.com/kongyim/nestjs-cms.git
 ```
 
@@ -92,12 +92,55 @@ Use credentials for an existing PostgreSQL database. The package loads `.env` au
 If you need a local database and port 5432 is available:
 
 ```sh
-docker run --name my-cms-postgres -d \
+docker run --name nestjs-cms-demo-postgres -d \
   -e POSTGRES_USER=cms -e POSTGRES_PASSWORD=cms_dev_password -e POSTGRES_DB=cms \
   -p 127.0.0.1:5432:5432 postgres:17-alpine
 ```
 
-Wait for PostgreSQL to be ready before starting the application. S3/MinIO is needed only when using attachments; plain resource CRUD works without object storage. See [storage configuration](docs/operations.md#aws-s3-configuration) for attachment settings.
+Wait for PostgreSQL to be ready before starting the application. The example above supports plain resource CRUD. **Attachments also require working S3/MinIO storage and an attachment field in the resource definition.**
+
+### 4a. Configure storage for attachments
+
+For local MinIO, add these settings to your application's `.env`:
+
+```dotenv
+S3_REGION=us-east-1
+S3_BUCKET=cms-attachments
+S3_ENDPOINT=http://127.0.0.1:9000
+S3_FORCE_PATH_STYLE=true
+S3_ACCESS_KEY_ID=minioadmin
+S3_SECRET_ACCESS_KEY=minioadmin123
+ATTACHMENT_MAX_BYTES=20971520
+```
+
+These credentials match this library's development Compose setup. From the `nestjs-cms` repository checkout, start storage with:
+
+```sh
+docker compose up -d --build minio minio-init
+```
+
+Wait for MinIO to become healthy and `minio-init` to finish successfully; it creates the private `cms-attachments` bucket. The npm package does not start storage or include the Compose setup. You can also use an existing MinIO server: supply its endpoint and credentials and create the bucket beforehand. The endpoint above assumes the application runs on your host machine.
+
+For AWS S3 instead, use your bucket's region and name, omit `S3_ENDPOINT`, and set `S3_FORCE_PATH_STYLE=false`. Supply both credential variables, or omit both when using an IAM role. See [AWS S3 configuration](docs/operations.md#aws-s3-configuration) for permissions.
+
+In `src/resources/pages.ts`, add this property to the existing `defineResource({...})` object:
+
+```ts
+attachments: [
+  { field: "cover", mimeTypes: ["image/jpeg", "image/png", "image/webp"] },
+],
+```
+
+Attachment fields are declared separately from the Zod schema and database columns. After restarting the application and creating a page, upload a file using its record ID:
+
+```sh
+curl -X POST http://localhost:3000/api/pages/RECORD_ID/attachments/cover \
+  -F 'file=@/absolute/path/to/cover.png'
+```
+
+Replace `RECORD_ID` and the file path with your values. If `ADMIN_API_KEY` is configured, include the `X-API-Key` header. Uploads and downloads always pass through the backend attachment API; the browser never connects directly to S3/MinIO.
+
+Without working object storage, the application can start and plain resource CRUD still works. Storage is contacted when an attachment operation needs it: uploads fail with HTTP 503 (`Object storage upload unavailable`), and downloads of existing attachments fail with HTTP 503 (`Attachment content unavailable`). There is no local-filesystem fallback. Omitting the S3 settings does not disable attachments; the client uses the default region/bucket and AWS credential chain, which only works if that environment already has access to the matching storage.
 
 ### 5. Start the application
 
