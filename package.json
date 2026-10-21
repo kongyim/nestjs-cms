@@ -1,0 +1,51 @@
+{
+  "name": "nestjs-cms",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Definition-driven NestJS CMS with S3 attachments",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/main.js",
+    "test": "jest --runInBand",
+    "test:integration": "jest --runInBand --config jest.integration.config.cjs",
+    "db:migrate": "typeorm-ts-node-commonjs migration:run -d src/database/data-source.ts",
+    "db:revert": "typeorm-ts-node-commonjs migration:revert -d src/database/data-source.ts",
+    "db:generate": "typeorm-ts-node-commonjs migration:generate -d src/database/data-source.ts",
+    "seed": "ts-node scripts/seed.ts",
+    "storage:cleanup": "ts-node scripts/cleanup.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.850.0",
+    "@aws-sdk/s3-request-presigner": "^3.850.0",
+    "@nestjs/common": "^11.1.0",
+    "@nestjs/core": "^11.1.0",
+    "@nestjs/platform-express": "^11.1.0",
+    "dotenv": "^16.6.0",
+    "mysql2": "^3.14.0",
+    "pg": "^8.16.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "typeorm": "^0.3.25",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "^11.1.0",
+    "@types/express": "^5.0.0",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^22.0.0",
+    "@types/supertest": "^6.0.0",
+    "jest": "^30.0.0",
+    "prettier": "^3.6.0",
+    "supertest": "^7.1.0",
+    "ts-jest": "^29.4.0",
+    "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.9.0"
+  }
+}
