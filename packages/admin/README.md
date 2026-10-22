@@ -109,6 +109,48 @@ Default access checks match `readPermission` and `writePermission` against the i
 
 Built-in types: `text`, `email`, `url`, `textarea`, `number`, `date`, `datetime-local` (UTC), `json`, `select`, `checkbox`, `checkboxes`, `attachment`, and `password`. All controls appear in `formFields` order. `itemsFrom` loads select options from another resource.
 
+### Responsive widths and groups
+
+The portal and editor use the full available content width. Forms use a 12-column
+grid. Fields without `width` occupy a full row. Set `width: 6` for two columns,
+`width: 4` for three, or `width: 3` for four. Numeric widths apply from the theme's
+`md` breakpoint; fields stack on smaller screens. For finer control, use
+`width: { xs: 12, sm: 6, lg: 4 }`.
+
+Organize long forms with groups inside `formFields`:
+
+```ts
+formFields: [
+  {
+    type: 'group',
+    key: 'details',
+    label: 'Page details',
+    description: 'Manage the title and status.',
+    fields: [
+      { field: 'title', label: 'Title', type: 'text', width: 6 },
+      { field: 'status', label: 'Status', type: 'select', width: 6,
+        items: [{ value: 'draft', label: 'Draft' }, { value: 'published', label: 'Published' }] },
+    ],
+  },
+  {
+    type: 'group',
+    key: 'translations',
+    label: 'Translated titles',
+    fields: [
+      { field: 'translations.en', label: 'English', type: 'text', width: 4 },
+      { field: 'translations.tc', label: 'Traditional Chinese', type: 'text', width: 4 },
+      { field: 'translations.sc', label: 'Simplified Chinese', type: 'text', width: 4 },
+    ],
+  },
+],
+```
+
+Groups can also have a `width` and contain nested groups. Child widths are relative
+to their group's grid. Give each group a unique `key`. Fields and groups appear in
+array order; groups only affect presentation, not API payloads. Existing flat
+forms remain supported. Related-record options, nested JSON, attachments, custom
+renderers, and password actions work within groups as before.
+
 Dot paths such as `translations.en` read nested objects and write the complete JSON column while preserving unedited siblings. Arrays are edited through JSON or checkbox controls, not indexed dot paths.
 
 Attachments use `accept` and optional `multiple`. Uploads and removals stay pending until Save; image previews work for both saved and selected files. Saving creates/updates the record first, then applies attachments and password actions. These are separate HTTP requests, not an atomic transaction. Successful attachment operations are acknowledged individually; remaining changes can be retried after a failure.

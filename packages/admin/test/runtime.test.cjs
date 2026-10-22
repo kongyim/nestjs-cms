@@ -203,3 +203,178 @@ test('generic renderer preserves field order, nested defaults, and custom contro
   assert.match(html, /type="password"/);
   assert.doesNotMatch(html, /Confirm password/);
 });
+
+test('responsive layouts default to full width on mobile and allow explicit breakpoints', () => {
+  const { gridColumns } = require('../dist/lib/form-layout');
+  assert.deepEqual(gridColumns(), { xs: 'span 12 / span 12' });
+  assert.deepEqual(gridColumns(6), {
+    xs: 'span 12 / span 12',
+    md: 'span 6 / span 6',
+  });
+  assert.deepEqual(gridColumns(4), {
+    xs: 'span 12 / span 12',
+    md: 'span 4 / span 4',
+  });
+  assert.deepEqual(gridColumns({ xs: 12, sm: 6, lg: 4 }), {
+    xs: 'span 12 / span 12',
+    sm: 'span 6 / span 6',
+    lg: 'span 4 / span 4',
+  });
+});
+
+test('groups flatten in display order for values, lookups, and special save actions', () => {
+  const { flattenFields } = require('../dist/lib/form-layout');
+  const { defineSection } = require('../dist/config');
+  const fields = [
+    {
+      type: 'group',
+      key: 'main',
+      label: 'Main',
+      fields: [
+        { field: 'translations.en', type: 'text', label: 'English', width: 6 },
+        {
+          type: 'group',
+          key: 'nested',
+          label: 'Nested',
+          fields: [
+            {
+              field: 'roleId',
+              type: 'select',
+              itemsFrom: { resource: 'roles', labelField: 'name' },
+            },
+            { field: 'cover', type: 'attachment' },
+            {
+              field: 'password',
+              type: 'password',
+              passwordAction: { path: (id) => `/password/${id}` },
+            },
+          ],
+        },
+      ],
+    },
+    { field: 'title', type: 'text' },
+  ];
+  const flat = flattenFields(fields);
+  assert.deepEqual(
+    flat.map((field) => field.field),
+    ['translations.en', 'roleId', 'cover', 'password', 'title'],
+  );
+  assert.equal(
+    flat.filter((field) => field.itemsFrom)[0].itemsFrom.resource,
+    'roles',
+  );
+  assert.equal(
+    passwordChanges(flat, { password: 'unchanged password' })[0].field,
+    'password',
+  );
+  const payload = nestFieldValues(
+    flat
+      .filter((field) => !['attachment', 'password'].includes(field.type))
+      .map((field) => [
+        field.field,
+        field.field === 'translations.en' ? 'Updated' : 'value',
+      ]),
+    { translations: { en: 'Old', tc: 'Keep' } },
+  );
+  assert.deepEqual(payload, {
+    translations: { en: 'Updated', tc: 'Keep' },
+    roleId: 'value',
+    title: 'value',
+  });
+  assert.doesNotThrow(() => defineSection({ key: 'test', formFields: fields }));
+  assert.throws(
+    () =>
+      defineSection({
+        key: 'test',
+        formFields: [...fields, { field: 'translations.en', type: 'text' }],
+      }),
+    /Duplicate field/,
+  );
+  assert.throws(
+    () =>
+      defineSection({
+        key: 'test',
+        formFields: [
+          {
+            type: 'group',
+            key: 'bad',
+            label: 'Bad',
+            fields: [{ field: 'title', type: 'text', width: 13 }],
+          },
+        ],
+      }),
+    /widths/,
+  );
+  assert.throws(
+    () => defineSection({ key: 'test', formFields: [fields[0], fields[0]] }),
+    /group key/,
+  );
+});
+
+test('grouped editor renders all field controls inline with responsive grids', () => {
+  const React = require('react');
+  const { renderToStaticMarkup } = require('react-dom/server');
+  const { AdminContext } = require('../dist/runtime');
+  const ResourceSection =
+    require('../dist/components/resource-section').default;
+  const section = {
+    key: 'pages',
+    label: 'Pages',
+    singular: 'page',
+    description: '',
+    defaults: { translations: { en: 'English' }, title: 'Title' },
+    listFields: [],
+    searchFields: [],
+    formFields: [
+      {
+        type: 'group',
+        key: 'content',
+        label: 'Content group',
+        description: 'Group description',
+        fields: [
+          { field: 'title', label: 'Page title', type: 'text', width: 6 },
+          {
+            field: 'translations.en',
+            label: 'English title',
+            type: 'text',
+            width: 6,
+          },
+          {
+            field: 'cover',
+            label: 'Cover image',
+            type: 'attachment',
+            width: 4,
+          },
+          {
+            field: 'password',
+            label: 'Password',
+            type: 'password',
+            width: 4,
+            passwordAction: { path: (id) => `/password/${id}` },
+          },
+        ],
+      },
+    ],
+  };
+  const html = renderToStaticMarkup(
+    React.createElement(
+      AdminContext.Provider,
+      { value: { api: async () => {}, config: { sections: [section] } } },
+      React.createElement(ResourceSection, {
+        section,
+        recordId: 'new',
+        canWrite: true,
+        onAccessChange: async () => {},
+      }),
+    ),
+  );
+  assert.match(html, /<fieldset/);
+  assert.match(html, /<legend[^>]*>Content group/);
+  assert.match(html, /Group description/);
+  assert.match(html, /value="English"/);
+  assert.match(html, /Cover image/);
+  assert.match(html, /type="password"/);
+  assert.match(html, /grid-template-columns:repeat\(12, minmax\(0, 1fr\)\)/);
+  assert.match(html, /grid-column:span 6\s*\/\s*span 6/);
+  assert.doesNotMatch(html, /max-w-3xl/);
+});

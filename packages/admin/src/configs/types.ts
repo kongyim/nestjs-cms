@@ -12,7 +12,27 @@ export type ResourceList = {
   meta: { page: number; total: number; totalPages: number };
 };
 export type Option = { value: string; label: string };
+export type ColumnSpan = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
+export type FieldWidth =
+  | ColumnSpan
+  | {
+      xs?: ColumnSpan;
+      sm?: ColumnSpan;
+      md?: ColumnSpan;
+      lg?: ColumnSpan;
+      xl?: ColumnSpan;
+    };
+export type FieldGroup = {
+  type: 'group';
+  key: string;
+  label: string;
+  description?: string;
+  width?: FieldWidth;
+  fields: FormItem[];
+};
+export type FormItem = FormField | FieldGroup;
 export type FormField = {
+  width?: FieldWidth;
   field: string;
   label: string;
   type:
@@ -66,5 +86,5 @@ export type SectionConfig = {
     items?: Option[];
     boolean?: boolean;
   }[];
-  formFields: FormField[];
+  formFields: FormItem[];
 };

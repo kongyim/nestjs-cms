@@ -6,6 +6,10 @@ export type { AdminConfig, FieldRendererProps } from './config';
 export type {
   SectionConfig,
   FormField,
+  FormItem,
+  FieldGroup,
+  FieldWidth,
+  ColumnSpan,
   FormValues,
   FieldValue,
   ResourceRecord,

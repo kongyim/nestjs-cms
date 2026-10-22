@@ -25,6 +25,7 @@ import {
   Typography,
 } from '@mui/material';
 import ResourceFields from './resource-fields';
+import { flattenFields } from '../lib/form-layout';
 import { passwordChanges } from '../lib/password-fields';
 import { readFieldPath, nestFieldValues } from '../lib/field-paths';
 import ResourceAttachments from './resource-attachments';
@@ -43,7 +44,7 @@ function editorValues(
   record?: ResourceRecord | null,
 ): FormValues {
   return Object.fromEntries(
-    section.formFields
+    flattenFields(section.formFields)
       .filter((field) => field.type !== 'attachment')
       .map((field) => {
         if (field.type === 'password') return [field.field, ''];
@@ -136,7 +137,7 @@ export default function ResourceSection({
     const controller = new AbortController();
     setLookupError('');
     const sources = new Map(
-      section.formFields.flatMap((field) =>
+      flattenFields(section.formFields).flatMap((field) =>
         field.itemsFrom
           ? [[field.itemsFrom.resource, field.itemsFrom] as const]
           : [],
@@ -221,9 +222,12 @@ export default function ResourceSection({
     setNotice('');
     let recordSaved = false;
     try {
-      const passwords = passwordChanges(section.formFields, values);
+      const passwords = passwordChanges(
+        flattenFields(section.formFields),
+        values,
+      );
       const payload = nestFieldValues(
-        section.formFields
+        flattenFields(section.formFields)
           .filter(
             (field) => field.type !== 'attachment' && field.type !== 'password',
           )
@@ -399,7 +403,7 @@ export default function ResourceSection({
             The record could not be loaded. Return to the list and try again.
           </Alert>
         ) : (
-          <div className="max-w-3xl space-y-6">
+          <div className="w-full space-y-6">
             <Paper variant="outlined" className="p-6 md:p-8">
               <Typography variant="h6" component="h2" className="mb-6">
                 {section.label} details

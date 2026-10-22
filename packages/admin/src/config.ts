@@ -1,3 +1,4 @@
+import { flattenFields, validateLayout } from './lib/form-layout';
 import type { ComponentType } from 'react';
 import type { ThemeOptions } from '@mui/material/styles';
 import type { FormField, FormValues, SectionConfig } from './configs/types';
@@ -25,8 +26,9 @@ export type AdminConfig = {
 };
 
 export function defineSection(section: SectionConfig): SectionConfig {
+  validateLayout(section.formFields);
   const fields = new Set<string>();
-  for (const field of section.formFields) {
+  for (const field of flattenFields(section.formFields)) {
     if (fields.has(field.field))
       throw new Error(`Duplicate field ${field.field} in ${section.key}.`);
     if (field.type === 'password' && !field.passwordAction)

@@ -274,7 +274,7 @@ export default function AdminPortal({
             Workspace / {section?.label ?? 'Overview'}
           </Typography>
         </header>
-        <main className="mx-auto max-w-7xl p-5 md:p-8">
+        <main className="w-full p-5 md:p-8">
           {error && (
             <Alert severity="error" className="mb-6">
               {error}
