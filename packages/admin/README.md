@@ -17,7 +17,7 @@ In the consuming application, install the resulting `nestjs-cms-admin-0.1.0.tgz`
 
 ## Minimal Next.js application
 
-Create `src/sections/pages.ts`. Each discovered file must default-export one section:
+Create `src/sections/pages.ts`. Default-export the section configuration:
 
 ```ts
 import { defineSection } from '@nestjs-cms/admin';
@@ -26,7 +26,6 @@ export default defineSection({
   key: 'pages',
   label: 'Pages',
   singular: 'page',
-  order: 10,
   description: 'Manage website pages.',
   readPermission: 'pages:read',
   writePermission: 'pages:write',
@@ -51,27 +50,33 @@ Add these scripts to your frontend's `package.json`:
 ```json
 {
   "scripts": {
-    "dev": "cms-admin dev -- next dev --port 3001",
-    "build": "cms-admin generate && next build",
-    "typecheck": "cms-admin generate && tsc --noEmit"
+    "dev": "next dev --port 3001",
+    "build": "next build",
+    "typecheck": "tsc --noEmit"
   }
 }
 ```
 
-Discovery defaults to `src/sections` and generates `src/sections.generated.ts`. Override with `--dir` and `--out`. Development watches file additions/removals and runs the command after `--`; ordinary edits are handled by your bundler. Discovery reads only top-level `.ts`, `.tsx`, `.js`, and `.jsx` files, ignoring `index`, `_`/`.` prefixes, declarations, and tests. Use `order` for navigation ordering; ties use filename order. Never edit the generated file.
+Sections are registered explicitly in `admin.config.ts`. Import the sections you want
+and list them in navigation order. Only listed sections appear; no generated registry
+or discovery command is needed. `defaultSection` chooses the initial screen without
+changing navigation order.
 
-Create `src/admin.config.ts`:
+Create `src/admin.config.ts` (this example assumes you also defined categories, roles, and users; include only the sections your application needs):
 
 ```ts
 'use client';
 import { defineAdmin } from '@nestjs-cms/admin';
-import { sections } from './sections.generated';
+import categories from './sections/categories';
+import pages from './sections/pages';
+import roles from './sections/roles';
+import users from './sections/users';
 
 export default defineAdmin({
   title: 'CMS Workspace',
   apiBaseUrl: '/api',
   defaultSection: 'pages',
-  sections,
+  sections: [categories, pages, roles, users],
 });
 ```
 

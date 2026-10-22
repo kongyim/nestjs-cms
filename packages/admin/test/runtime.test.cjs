@@ -7,12 +7,23 @@ const { readFieldPath, nestFieldValues } = require('../dist/lib/field-paths');
 const { passwordChanges } = require('../dist/lib/password-fields');
 const { saveAttachments } = require('../dist/lib/attachments');
 
-test('config ordering and duplicate validation do not mutate input', () => {
+test('config preserves explicit section order and validates duplicates', () => {
   const sections = [
-    { key: 'users', order: 20, formFields: [] },
-    { key: 'pages', order: 10, formFields: [] },
+    { key: 'users', formFields: [] },
+    { key: 'pages', formFields: [] },
   ];
-  assert.equal(defineAdmin({ sections }).sections[0].key, 'pages');
+  const config = defineAdmin({ sections, defaultSection: 'pages' });
+  assert.deepEqual(
+    config.sections.map((section) => section.key),
+    ['users', 'pages'],
+  );
+  assert.notEqual(config.sections, sections);
+  assert.deepEqual(
+    defineAdmin({ sections: [...sections].reverse() }).sections.map(
+      (section) => section.key,
+    ),
+    ['pages', 'users'],
+  );
   assert.equal(sections[0].key, 'users');
   assert.throws(
     () => defineAdmin({ sections: [sections[0], sections[0]] }),

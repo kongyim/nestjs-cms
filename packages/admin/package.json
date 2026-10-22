@@ -6,20 +6,32 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
     "./styles.css": "./dist/styles.css",
     "./package.json": "./package.json"
   },
-  "bin": { "cms-admin": "./scripts/cli.mjs" },
-  "files": ["dist", "scripts/cli.mjs", "README.md"],
-  "sideEffects": ["**/*.css"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": [
+    "**/*.css"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/build-css.cjs",
-    "test": "node --test test/*.test.cjs test/*.test.mjs",
+    "test": "node --test test/*.test.cjs",
     "prepack": "npm run build"
   },
-  "engines": { "node": ">=20.9" },
-  "peerDependencies": { "react": "^19.0.0", "react-dom": "^19.0.0" },
+  "engines": {
+    "node": ">=20.9"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
   "dependencies": {
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",

@@ -50,8 +50,6 @@ export function defineAdmin(config: AdminConfig): AdminConfig {
     throw new Error(`Unknown default section: ${config.defaultSection}`);
   return {
     ...config,
-    sections: [...config.sections].sort(
-      (a, b) => (a.order ?? 0) - (b.order ?? 0),
-    ),
+    sections: [...config.sections],
   };
 }

@@ -249,7 +249,7 @@ The package implements resource discovery, CRUD, filters, transactional hooks, a
 ## Reusable admin frontend
 
 The companion React package lives in [packages/admin](packages/admin/README.md).
-It provides the portal UI, configurable sections, automatic section discovery,
+It provides the portal UI, explicitly configured sections in navigation order,
 nested JSON fields, deferred attachments, and inline password actions. It is
 packaged independently as `@nestjs-cms/admin`; the core backend package does not
 install frontend dependencies. See the package README for build/install steps,

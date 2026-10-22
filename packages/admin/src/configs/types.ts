@@ -47,7 +47,6 @@ export type FormField = {
 };
 export type SectionConfig = {
   key: string;
-  order?: number;
   label: string;
   singular: string;
   description: string;
