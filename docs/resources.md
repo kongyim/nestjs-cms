@@ -13,7 +13,7 @@ Discovery runs at startup, not on each request. Restart after adding or removing
 No additional controller or service is required. Define database columns explicitly: Zod controls the input contract, while TypeORM controls SQL storage and database constraints. Database constraints are not inferred from Zod refinements.
 
 ```ts
-import { defineResource, z } from "nestjs-cms";
+import { defineResource, z } from "@nestjs-cms/core";
 
 export const schema = z
   .object({
@@ -77,7 +77,7 @@ Schemas with object-level refinements may not support `.partial()`. Supply an ex
 Each hook receives `{ manager, resource, action, id, record, previous }`. Update/delete hooks also receive `previous`. Hooks run in array order. Before hooks can mutate `record` or return a **complete replacement record**. Before-create/update results must conform to the schema. Return values from after hooks are not written back; use the supplied manager for additional database writes.
 
 ```ts
-import type { ResourceHook } from "nestjs-cms";
+import type { ResourceHook } from "@nestjs-cms/core";
 
 const hook: ResourceHook = async ({ manager, record, id }) => {
   await manager.getRepository("audit_logs").insert({

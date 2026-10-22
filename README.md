@@ -1,4 +1,4 @@
-# nestjs-cms
+# @nestjs-cms/core
 
 Add a resource-driven CMS backend to a NestJS application. Define each resource in one file; the module discovers it and provides validated CRUD APIs, filters, lifecycle hooks, and S3-backed attachments.
 
@@ -11,10 +11,10 @@ Requires Node.js 22+, npm, and a PostgreSQL database. The package supports NestJ
 ```sh
 npx @nestjs/cli@11 new nestjs-cms-demo --package-manager npm
 cd nestjs-cms-demo
-npm install nestjs-cms
+npm install @nestjs-cms/core
 ```
 
-The npm package includes compiled JavaScript and TypeScript declarations. Imports use `"nestjs-cms"`.
+The npm package includes compiled JavaScript and TypeScript declarations. Imports use `"@nestjs-cms/core"`.
 
 The package includes Zod, TypeORM, PostgreSQL/MySQL drivers, dotenv, and the S3 client. The NestJS project supplies the NestJS runtime dependencies.
 
@@ -27,7 +27,7 @@ mkdir -p src/resources
 Create `src/resources/pages.ts`:
 
 ```ts
-import { defineResource, z } from "nestjs-cms";
+import { defineResource, z } from "@nestjs-cms/core";
 
 export default defineResource({
   name: "pages",
@@ -55,7 +55,7 @@ Add `ResourceModule.forRoot(...)` to the `imports` array in `src/app.module.ts`:
 ```ts
 import { Module } from "@nestjs/common";
 import { join } from "node:path";
-import { ResourceModule } from "nestjs-cms";
+import { ResourceModule } from "@nestjs-cms/core";
 
 @Module({
   imports: [
@@ -163,13 +163,27 @@ For production, run the host project's `npm run build` and `npm run start:prod`,
 Same-origin frontends do not require CORS. To apply `CORS_ORIGINS` for a separate frontend and enable graceful shutdown, call the helper in your application's existing `src/main.ts`:
 
 ```ts
-import { configureCmsApp } from "nestjs-cms";
+import { configureCmsApp } from "@nestjs-cms/core";
 
 // After NestFactory.create(AppModule), before app.listen(...):
 configureCmsApp(app);
 ```
 
 Set `CORS_ORIGINS=http://localhost:5173`, for example. Your host application still controls its listening port, bind address, and bootstrap process. If it already manages CORS and shutdown hooks, keep that configuration instead.
+
+## Migrating from `nestjs-cms`
+
+The backend package is now named `@nestjs-cms/core`. Once the scoped package is
+published, existing applications can switch with:
+
+```sh
+npm uninstall nestjs-cms
+npm install @nestjs-cms/core
+```
+
+Replace imports from `"nestjs-cms"` with `"@nestjs-cms/core"`, including type
+imports. The API is unchanged by this rename. The admin package remains
+`@nestjs-cms/admin`; the GitHub repository remains `kongyim/nestjs-cms`.
 
 ## Install a local package
 
@@ -180,10 +194,10 @@ npm ci
 npm pack
 ```
 
-This builds `nestjs-cms-0.1.0.tgz`, including JavaScript and TypeScript declarations. In the new NestJS project, replace the npm installation step with:
+This builds `nestjs-cms-core-0.1.0.tgz`, including JavaScript and TypeScript declarations. In the new NestJS project, replace the npm installation step with:
 
 ```sh
-npm install /absolute/path/to/nestjs-cms-0.1.0.tgz
+npm install /absolute/path/to/nestjs-cms-core-0.1.0.tgz
 ```
 
 The package excludes the demo application, demo resources, demo migrations, tests, and local secrets. Packing does not publish anything to a registry.
@@ -199,17 +213,17 @@ npm install git+ssh://git@github.com/kongyim/nestjs-cms.git
 
 The package's `prepare` script builds TypeScript during Git installation. Keep
 npm lifecycle scripts enabled. Append `#<tag-or-commit>` to the Git URL to select
-an existing revision. Imports still use `"nestjs-cms"`.
+an existing revision. Imports still use `"@nestjs-cms/core"`.
 
-### Troubleshooting: Cannot find module `nestjs-cms`
+### Troubleshooting: Cannot find module `@nestjs-cms/core`
 
-Run `npm ls nestjs-cms` in the consuming application and check that
-`node_modules/nestjs-cms/dist/src/index.js` and `index.d.ts` exist. To reinstall
+Run `npm ls @nestjs-cms/core` in the consuming application and check that
+`node_modules/@nestjs-cms/core/dist/src/index.js` and `index.d.ts` exist. To reinstall
 the published package, stop the development server and run:
 
 ```sh
-npm uninstall nestjs-cms
-npm install nestjs-cms
+npm uninstall @nestjs-cms/core
+npm install @nestjs-cms/core
 npm run start:dev
 ```
 
@@ -219,8 +233,24 @@ output, or use a locally packed package as described above.
 
 ## Publishing updates to npm
 
+For the first release under the new name, run `npm run release:check` and
+`npm run release` from the repository root. Version `0.1.0` can be used because
+`@nestjs-cms/core` is a separate npm package from `nestjs-cms` (provided that
+version has not already been published under the new name).
+
+After confirming `npm view @nestjs-cms/core version` returns the new release,
+the owner of the old package can mark it deprecated:
+
+```sh
+npm deprecate 'nestjs-cms@*' 'Renamed to @nestjs-cms/core. Install @nestjs-cms/core and update your imports.'
+```
+
+This keeps existing versions available while directing users to the new package.
+For subsequent releases, follow the steps below.
+
+
 Run the following commands in the package you changed: the repository root for
-`nestjs-cms`, or `packages/admin` for `@nestjs-cms/admin`. The packages have
+`@nestjs-cms/core`, or `packages/admin` for `@nestjs-cms/admin`. The packages have
 independent versions; release only the packages you changed.
 
 ```sh
