@@ -245,3 +245,12 @@ Integration tests use the dedicated `cms_test` database and real MinIO services.
 ## Scope
 
 The package implements resource discovery, CRUD, filters, transactional hooks, and backend-managed attachments. Import/export, image resizing, encrypted/hashed fields, automatic relation expansion, and resource permissions are not included. Multilingual and nested fields use JSON. See the [comparison with the original project](docs/resources.md#comparison-with-the-original-project) for differences from `polyu-souvenirs`.
+
+## Reusable admin frontend
+
+The companion React package lives in [packages/admin](packages/admin/README.md).
+It provides the portal UI, configurable sections, automatic section discovery,
+nested JSON fields, deferred attachments, and inline password actions. It is
+packaged independently as `@nestjs-cms/admin`; the core backend package does not
+install frontend dependencies. See the package README for build/install steps,
+Next.js setup, and authentication/transport adapters.
