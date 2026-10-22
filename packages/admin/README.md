@@ -252,3 +252,26 @@ your consuming application, replacing the path with its actual location:
 ```sh
 npm install /path/to/nestjs-cms/packages/admin/nestjs-cms-admin-0.1.0.tgz
 ```
+
+## Publishing updates to npm
+
+From `packages/admin`, after making your changes:
+
+```sh
+npm ci
+npm run release:check
+npm run version:patch
+npm run release
+```
+
+`release:check` tests, builds, and previews the package without publishing.
+`version:patch` updates the version in both package files automatically (for example,
+`0.1.0` → `0.1.1`); use `version:minor` or `version:major` for larger releases.
+`release` tests again, builds, and publishes publicly. Complete npm's authentication
+prompt when requested. Commit and push the source and version changes afterward.
+
+The admin and backend are released independently. Each published update needs a
+new version. If publishing fails, retry `npm run release` without another bump
+as long as that version was not published. See the repository's
+[publishing guide](../../README.md#publishing-updates-to-npm) for version choices
+and recovery steps.

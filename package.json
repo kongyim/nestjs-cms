@@ -19,7 +19,13 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "prepare": "npm run build",
-    "pack:local": "npm pack"
+    "pack:local": "npm pack",
+    "release:check": "npm test && npm pack --dry-run",
+    "version:patch": "npm version patch --no-git-tag-version",
+    "version:minor": "npm version minor --no-git-tag-version",
+    "version:major": "npm version major --no-git-tag-version",
+    "release": "npm publish --access public",
+    "prepublishOnly": "npm test"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.850.0",

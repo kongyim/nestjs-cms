@@ -23,7 +23,13 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/build-css.cjs",
     "test": "node --test test/*.test.cjs",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "release:check": "npm test && npm pack --dry-run",
+    "version:patch": "npm version patch --no-git-tag-version",
+    "version:minor": "npm version minor --no-git-tag-version",
+    "version:major": "npm version major --no-git-tag-version",
+    "release": "npm publish --access public",
+    "prepublishOnly": "npm test"
   },
   "engines": {
     "node": ">=20.9"

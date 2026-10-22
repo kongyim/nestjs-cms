@@ -217,6 +217,49 @@ For Git installations, missing compiled files can indicate an older revision or
 a failed `prepare` script. Reinstall with `--foreground-scripts` to see build
 output, or use a locally packed package as described above.
 
+## Publishing updates to npm
+
+Run the following commands in the package you changed: the repository root for
+`nestjs-cms`, or `packages/admin` for `@nestjs-cms/admin`. The packages have
+independent versions; release only the packages you changed.
+
+```sh
+npm ci
+npm run release:check
+npm run version:patch
+npm run release
+```
+
+- `release:check` runs tests, builds the package, and previews the files to publish
+  without uploading anything. Review that file list before continuing. For backend
+  changes involving the database or storage, also run `npm run test:integration`
+  with the required services running.
+- `version:patch` updates `package.json` and `package-lock.json` automatically
+  (for example, `0.1.0` → `0.1.1`). No manual version editing is needed.
+  Use `version:minor` for a feature release (`0.1.0` → `0.2.0`) or
+  `version:major` for a major release (`0.1.0` → `1.0.0`). During `0.x`
+  development, document breaking changes explicitly and use a minor release;
+  from `1.0.0` onward, use a major release for breaking changes.
+- `release` publishes the current version publicly. Tests run again through
+  `prepublishOnly`, and the existing packaging hook builds the package before
+  upload. If needed, run `npm login --auth-type=web` first and complete npm's
+  authentication prompts.
+
+Every published update needs a new version, including README-only updates on npm.
+A published name/version cannot be reused. These scripts do not create Git commits
+or tags: review and commit the code, README, and version/lockfile changes, then
+push them to GitHub to keep the release source recorded.
+
+If publication fails after the version bump, fix the problem and run
+`npm run release` again without bumping again, provided that version was not
+published. If the outcome is unclear, check `npm view <package-name>@<version> version`
+first. The version scripts only change local files; `release:check` does not bump
+versions, and `release` does not bump automatically.
+
+See [npm version](https://docs.npmjs.com/cli/commands/npm-version/) for version
+updates and [npm publish](https://docs.npmjs.com/cli/commands/npm-publish/) for
+publication rules.
+
 ## Documentation
 
 - [Resource definitions, hooks, and service methods](docs/resources.md)
