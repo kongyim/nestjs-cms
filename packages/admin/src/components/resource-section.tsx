@@ -25,6 +25,7 @@ import {
   Typography,
 } from '@mui/material';
 import ResourceFields from './resource-fields';
+import AttachmentListCell from './attachment-list-cell';
 import { flattenFields } from '../lib/form-layout';
 import { passwordChanges } from '../lib/password-fields';
 import { readFieldPath, nestFieldValues } from '../lib/field-paths';
@@ -82,6 +83,11 @@ export default function ResourceSection({
   onAccessChange: () => Promise<void>;
 }) {
   const { api } = useAdmin();
+  const attachmentFields = new Set(
+    flattenFields(section.formFields)
+      .filter((field) => field.type === 'attachment')
+      .map((field) => field.field),
+  );
   const [result, setResult] = useState<ResourceList | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -604,6 +610,23 @@ export default function ResourceSection({
                     className="cursor-pointer"
                   >
                     {section.listFields.map((field) => {
+                      if (
+                        field.type === 'attachment' ||
+                        (!field.type && attachmentFields.has(field.field))
+                      ) {
+                        return (
+                          <TableCell
+                            key={field.field}
+                            className="max-w-80 break-words"
+                          >
+                            <AttachmentListCell
+                              resource={section.key}
+                              record={record}
+                              field={field.field}
+                            />
+                          </TableCell>
+                        );
+                      }
                       const value = record[field.field];
                       const display =
                         value == null || value === ''

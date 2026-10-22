@@ -378,3 +378,44 @@ test('grouped editor renders all field controls inline with responsive grids', (
   assert.match(html, /grid-column:span 6\s*\/\s*span 6/);
   assert.doesNotMatch(html, /max-w-3xl/);
 });
+
+test('attachment list cells render previews, filenames, empty states, and configured URLs', () => {
+  const React = require('react');
+  const { renderToStaticMarkup } = require('react-dom/server');
+  const { AdminContext } = require('../dist/runtime');
+  const Cell = require('../dist/components/attachment-list-cell').default;
+  const image = { id: 'image/id', name: 'Cover photo', mimeType: 'image/png' };
+  function render(value, config = {}) {
+    return renderToStaticMarkup(
+      React.createElement(
+        AdminContext.Provider,
+        { value: { api: async () => {}, config: { sections: [], ...config } } },
+        React.createElement(Cell, {
+          resource: 'pages',
+          field: 'cover',
+          record: { id: 'page/id', attachments: { cover: value } },
+        }),
+      ),
+    );
+  }
+  const html = render(image, { apiBaseUrl: '/custom-api/' });
+  assert.match(
+    html,
+    /src="\/custom-api\/pages\/page%2Fid\/attachments\/cover\/image%2Fid"/,
+  );
+  assert.match(html, /alt="Cover photo"/);
+  assert.match(html, /loading="lazy"/);
+  assert.equal(render(null), '—');
+  assert.equal(render([]), '—');
+  const multiple = render([
+    image,
+    { id: 'pdf', name: 'Document.pdf', mimeType: 'application/pdf' },
+  ]);
+  assert.match(multiple, /<img/);
+  assert.match(multiple, /Document.pdf/);
+  assert.equal((multiple.match(/<img/g) ?? []).length, 1);
+  assert.match(
+    render(image, { attachmentUrl: (path) => `/download${path}` }),
+    /src="\/download\/pages\//,
+  );
+});

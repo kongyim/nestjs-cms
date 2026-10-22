@@ -169,3 +169,12 @@ Passwords are write-only and excluded from ordinary resource payloads:
 Blank passwords are skipped. Non-empty passwords are sent unchanged via `PUT { password }` after the record exists.
 
 For a custom control, register a React component in `fieldRenderers: { customType: MyField }`. It receives `{ field, values, disabled, onChange }`; use `values[field.field]` and pass updated values to `onChange`. An optional field-level `serialize(value, values)` converts the value before the ordinary resource request. Built-in attachment/password save semantics still apply to those types.
+
+### Attachment columns in lists
+
+Add `{ field: 'cover', label: 'Cover', type: 'attachment' }` to `listFields`
+to show image thumbnails from `record.attachments.cover`. The type is also
+inferred if the matching form field is an attachment, including inside groups.
+Multiple attachments render together; non-image files display their names, and
+empty fields display a dash. Previews use `apiBaseUrl` or `attachmentUrl`, just
+like the editor, and clicking the row still opens the record.

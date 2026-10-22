@@ -76,7 +76,7 @@ export type SectionConfig = {
   listFields: {
     field: string;
     label: string;
-    type?: 'date' | 'boolean';
+    type?: 'date' | 'boolean' | 'attachment';
     itemsFrom?: { resource: string; labelField: string };
   }[];
   searchFields: {
