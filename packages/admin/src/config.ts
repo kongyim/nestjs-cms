@@ -29,6 +29,8 @@ export type AdminConfig = {
   fieldRenderers?: Record<string, ComponentType<FieldRendererProps>>;
   attachmentUrl?: (path: string) => string;
   theme?: ThemeOptions;
+  /** Optional server-side import action below section navigation. */
+  databaseImport?: { path?: string; label?: string; permission?: string };
 };
 
 export function defineSection(section: SectionConfig): SectionConfig {

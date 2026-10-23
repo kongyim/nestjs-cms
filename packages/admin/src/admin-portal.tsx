@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { createApiClient, createSessionAuth, type Identity } from './lib/api';
 import { AdminContext } from './runtime';
 import { defineAdmin, type AdminConfig } from './config';
@@ -28,6 +28,10 @@ export default function AdminPortal({
 }) {
   const config = useMemo(() => defineAdmin(input), [input]);
   const [expired, setExpired] = useState(0);
+  const [importing, setImporting] = useState(false);
+  const importLock = useRef(false);
+  const [importNotice, setImportNotice] = useState('');
+  const [contentVersion, setContentVersion] = useState(0);
   const api = useMemo(() => {
     const request =
       config.request ??
@@ -198,6 +202,33 @@ export default function AdminPortal({
     }
   }
 
+  async function importDatabase() {
+    if (importLock.current || !config.databaseImport) return;
+    importLock.current = true;
+    setImporting(true);
+    setError('');
+    setImportNotice('');
+    try {
+      const result = await api<{
+        total: number;
+        resources: Record<string, { created: number; updated: number }>;
+      }>(config.databaseImport.path ?? '/database/import', { method: 'POST' });
+      const counts = Object.values(result.resources);
+      setImportNotice(
+        `Import complete: ${counts.reduce((sum, value) => sum + value.created, 0)} created, ${counts.reduce((sum, value) => sum + value.updated, 0)} updated.`,
+      );
+      setContentVersion((value) => value + 1);
+      await refreshAccess();
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : 'Database import failed.',
+      );
+    } finally {
+      importLock.current = false;
+      setImporting(false);
+    }
+  }
+
   const navigation = (
     <div className="flex h-full flex-col p-4">
       <div className="px-3 pt-4 pb-8">
@@ -225,6 +256,19 @@ export default function AdminPortal({
           </ListItemButton>
         ))}
       </List>
+      {config.databaseImport &&
+        canAccess(user, config.databaseImport.permission ?? 'users:manage') && (
+          <Button
+            variant="outlined"
+            onClick={importDatabase}
+            disabled={importing || busy}
+            sx={{ mb: 2 }}
+          >
+            {importing
+              ? 'Importing…'
+              : (config.databaseImport.label ?? 'Import database')}
+          </Button>
+        )}
       <Divider />
       <div className="flex items-center gap-3 px-2 py-5">
         <Avatar className="bg-blue-100 text-blue-800">
@@ -243,7 +287,7 @@ export default function AdminPortal({
           </Typography>
         </div>
       </div>
-      <Button variant="outlined" onClick={logout} disabled={busy}>
+      <Button variant="outlined" onClick={logout} disabled={busy || importing}>
         Sign out
       </Button>
     </div>
@@ -280,9 +324,14 @@ export default function AdminPortal({
               {error}
             </Alert>
           )}
+          {importNotice && (
+            <Alert severity="success" className="mb-6" role="status">
+              {importNotice}
+            </Alert>
+          )}
           {section ? (
             <SectionContent
-              key={`${user.id}:${section.key}`}
+              key={`${user.id}:${section.key}:${contentVersion}`}
               section={section}
               recordId={section.key === route.section ? route.record : null}
               canWrite={

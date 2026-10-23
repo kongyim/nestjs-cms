@@ -357,3 +357,12 @@ Defaults are merged; form, list, and search fields are appended. Built-in form
 fields/defaults cannot be overridden. Existing calls without extensions retain
 their behavior. Configure matching `resourceExtensions` in `@nestjs-cms/auth`
 and migrate the database before saving these fields.
+
+## Database import action
+
+Set `databaseImport: { label: 'Import database' }` in `defineAdmin` to show an action
+below the sections. It defaults to `POST /database/import` through the configured API
+client and is visible to `users:manage`. Configure the authenticated endpoint with
+`@nestjs-cms/import`. The action reports progress, errors, and counts, then refreshes
+the displayed section. Optional `path` and `permission` affect the client only; server
+permissions cannot be overridden by configuration in the browser.
