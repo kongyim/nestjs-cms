@@ -3,7 +3,8 @@
 Add a resource-driven CMS backend to a NestJS application. Define each resource in one file; the module discovers it and provides validated CRUD APIs, filters, lifecycle hooks, and S3-backed attachments.
 
 For a complete API and admin workspace with login, start with
-[Build your own CMS repository](#build-your-own-cms-repository). For a backend-only
+[Build a CMS from scratch](#build-a-cms-from-scratch), or
+[use the demo as a template](#build-your-own-cms-repository). For a backend-only
 integration into a new NestJS application, follow the quick start below.
 
 ## Quick start
@@ -175,6 +176,573 @@ configureCmsApp(app);
 
 Set `CORS_ORIGINS=http://localhost:5173`, for example. Your host application still controls its listening port, bind address, and bootstrap process. If it already manages CORS and shutdown hooks, keep that configuration instead.
 
+## Build a CMS from scratch
+
+Use this route to create your own repository without cloning or renaming the
+demo. You will build a NestJS API, a Next.js admin at `/admin`, PostgreSQL, and
+MinIO, including administrator login, user and role management, and image uploads.
+Docker runs the database and storage; Node.js runs the two applications.
+
+`@nestjs-cms/auth` supplies users, roles, database-backed sessions, and the
+login API. You configure the module once; no copied authentication files are
+needed. This walkthrough uses the latest npm releases of all three CMS packages.
+
+### 1. Create the repository and two apps
+
+Install Node.js 22+, npm, Git, and Docker with Docker Compose. Choose your project
+folder name in the first command; subsequent commands use workspace paths, so
+there are no demo-specific package names to rename:
+
+```sh
+mkdir my-cms
+cd my-cms
+git init
+mkdir apps
+npx @nestjs/cli@11 new api --directory apps/api --package-manager npm --skip-git --skip-install
+npx create-next-app@16 apps/admin --ts --app --src-dir --eslint --no-tailwind --use-npm --import-alias "@/*" --skip-install --disable-git
+```
+
+For any additional Next.js prompts, keep the defaults. These commands use NestJS
+11 and Next.js 16; the CMS packages are installed from their latest npm releases
+in the next step. See the [Nest CLI options](https://docs.nestjs.com/cli/usages)
+and [Next.js CLI options](https://nextjs.org/docs/app/api-reference/cli/create-next-app)
+for the scaffold commands.
+
+Create `package.json` in the repository root:
+
+```json
+{
+  "name": "my-cms",
+  "private": true,
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev:api": "npm run start:dev --workspace=apps/api",
+    "dev:admin": "npm run dev --workspace=apps/admin -- --hostname 127.0.0.1 --port 3001",
+    "build": "npm run build --workspaces",
+    "typecheck:admin": "tsc --noEmit -p apps/admin/tsconfig.json",
+    "start:api": "npm run start:prod --workspace=apps/api",
+    "start:admin": "npm run start --workspace=apps/admin -- --hostname 127.0.0.1 --port 3001"
+  }
+}
+```
+
+You can change `name` to your own project name. Create a root `.gitignore`:
+
+```gitignore
+node_modules/
+dist/
+.next/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+```
+
+Run all remaining shell commands from this repository root unless stated otherwise:
+
+```sh
+npm install
+npm install @nestjs-cms/core@latest @nestjs-cms/auth@latest dotenv --workspace=apps/api
+npm install @nestjs-cms/admin@latest @mui/material-nextjs@9 @emotion/cache --workspace=apps/admin
+mkdir -p docker apps/api/src/resources apps/admin/src/sections
+```
+
+Keep the single root `package-lock.json` in Git. The resulting layout will be:
+
+```text
+my-cms/
+  apps/api/src/             NestJS host, authentication, and resources
+  apps/admin/src/           Next.js shell and admin configuration
+  docker/                  MinIO Dockerfile and bucket initializer
+  docker-compose.yml       PostgreSQL and MinIO; no pgAdmin
+  .env                     Local settings, excluded from Git
+  package.json
+  package-lock.json
+```
+
+### 2. Create the shared environment file
+
+Create `.env` in the repository root. Replace the example passwords with your
+own values; the administrator password must have 12–128 characters:
+
+```dotenv
+NODE_ENV=development
+PORT=3000
+DB_TYPE=postgres
+DB_HOST=127.0.0.1
+DB_PORT=5432
+DB_USERNAME=cms
+DB_PASSWORD=change-this-local-db-password
+DB_DATABASE=cms
+DB_SYNCHRONIZE=true
+
+S3_REGION=us-east-1
+S3_BUCKET=cms-attachments
+S3_ENDPOINT=http://127.0.0.1:9000
+S3_FORCE_PATH_STYLE=true
+S3_ACCESS_KEY_ID=minioadmin
+S3_SECRET_ACCESS_KEY=change-this-local-storage-password
+ATTACHMENT_MAX_BYTES=20971520
+
+ADMIN_ORIGIN=http://localhost:3001
+ADMIN_BOOTSTRAP_EMAIL=admin@example.com
+ADMIN_BOOTSTRAP_PASSWORD=choose-a-unique-admin-password
+ADMIN_API_KEY=
+CORS_ORIGINS=
+```
+
+Bootstrap creates the first administrator only when the users table is empty.
+Remove both bootstrap values after the first successful startup; existing
+accounts and passwords are never overwritten. `ADMIN_API_KEY` may be empty for
+local development because session authentication still protects the API. No
+secret is passed to the frontend.
+
+### 3. Create Docker Compose and the storage files
+
+Create `docker-compose.yml` in the repository root:
+
+```yaml
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:?Set DB_USERNAME in .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      POSTGRES_DB: ${DB_DATABASE:?Set DB_DATABASE in .env}
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  minio:
+    build:
+      context: ./docker
+      dockerfile: minio.Dockerfile
+    command: server /data --console-address ':9001'
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:?Set S3_ACCESS_KEY_ID in .env}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:?Set S3_SECRET_ACCESS_KEY in .env}
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  minio-init:
+    build:
+      context: ./docker
+      dockerfile: storage-init.Dockerfile
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:?Set S3_BUCKET in .env}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?Set S3_ACCESS_KEY_ID in .env}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?Set S3_SECRET_ACCESS_KEY in .env}
+
+volumes:
+  postgres-data:
+  minio-data:
+```
+
+Create `docker/minio.Dockerfile`. This builds a pinned MinIO source release:
+
+```dockerfile
+FROM golang:1.24.8-bookworm AS build
+ENV CGO_ENABLED=0
+RUN go install github.com/minio/minio@RELEASE.2025-10-15T17-29-55Z
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
+COPY --from=build /go/bin/minio /usr/local/bin/minio
+EXPOSE 9000 9001
+ENTRYPOINT ["minio"]
+```
+
+Create `docker/storage-init.Dockerfile`:
+
+```dockerfile
+FROM node:22-alpine
+WORKDIR /app
+RUN npm init -y && npm install --save-exact @aws-sdk/client-s3@3.850.0
+COPY init-s3.cjs ./init-s3.cjs
+CMD ["node", "init-s3.cjs"]
+```
+
+Create `docker/init-s3.cjs`:
+
+```js
+const { S3Client, CreateBucketCommand } = require("@aws-sdk/client-s3");
+
+const client = new S3Client({
+  endpoint: process.env.S3_ENDPOINT,
+  region: process.env.S3_REGION,
+  forcePathStyle: true,
+  credentials: {
+    accessKeyId: process.env.S3_ACCESS_KEY_ID,
+    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
+  },
+});
+
+async function main() {
+  const Bucket = process.env.S3_BUCKET;
+  try {
+    await client.send(new CreateBucketCommand({ Bucket }));
+  } catch (error) {
+    if (error.name !== "BucketAlreadyOwnedByYou") throw error;
+  }
+  console.log(`Private bucket ready: ${Bucket}`);
+}
+
+main()
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  })
+  .finally(() => client.destroy());
+```
+
+Start the services:
+
+```sh
+docker compose up -d --build
+docker compose ps -a
+docker compose logs minio-init
+```
+
+The first MinIO build can take several minutes. Continue when PostgreSQL and
+MinIO are healthy and `minio-init` has exited with code 0. The bucket is private;
+uploads and downloads will go through your authenticated API.
+
+There is no pgAdmin service. You can inspect the database using
+`docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'`.
+The MinIO console is at `http://localhost:9001`; sign in with your S3 credentials.
+
+### 4. Configure the NestJS host and a resource
+
+Create `apps/api/src/env.ts` so the API loads the root `.env` even though npm runs
+its workspace commands from `apps/api`:
+
+```ts
+import { config } from "dotenv";
+import { resolve } from "node:path";
+
+config({ path: resolve(__dirname, "../../../.env") });
+```
+
+Replace `apps/api/tsconfig.json` with the following. This explicitly uses CommonJS
+and keeps compiled resources at `dist/resources`, where discovery expects them:
+
+```json
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "ES2023",
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "declaration": true,
+    "sourceMap": true,
+    "removeComments": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "incremental": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "test", "**/*.spec.ts"]
+}
+```
+
+Create `apps/api/src/resources/pages.ts`:
+
+```ts
+import { defineResource, z } from "@nestjs-cms/core";
+
+export default defineResource({
+  name: "pages",
+  schema: z
+    .object({
+      title: z.string().trim().min(1).max(200),
+      status: z.enum(["draft", "published"]).default("draft"),
+    })
+    .strict(),
+  columns: {
+    title: { type: String, length: 200 },
+    status: { type: String, length: 20 },
+  },
+  filterable: ["title", "status"],
+  sortable: ["title", "createdAt"],
+  attachments: [
+    { field: "cover", mimeTypes: ["image/jpeg", "image/png", "image/webp"] },
+  ],
+});
+```
+
+### 5. Enable authentication, users, and roles
+
+Replace `apps/api/src/app.module.ts`:
+
+```ts
+import "./env";
+import { Module } from "@nestjs/common";
+import { join } from "node:path";
+import { CmsAuthModule } from "@nestjs-cms/auth";
+
+@Module({
+  imports: [
+    CmsAuthModule.forRoot({
+      resourcesPath: join(__dirname, "resources"),
+      adminOrigin: process.env.ADMIN_ORIGIN ?? "http://localhost:3001",
+      bootstrapAdmin: process.env.ADMIN_BOOTSTRAP_EMAIL
+        ? {
+            email: process.env.ADMIN_BOOTSTRAP_EMAIL,
+            password: process.env.ADMIN_BOOTSTRAP_PASSWORD ?? "",
+          }
+        : undefined,
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+This registers the CMS and authentication together. Do not also import
+`ResourceModule.forRoot`, create your own `users`/`roles` definitions, or copy
+an auth guard. The default admin prefix is `/admin`. The package automatically
+registers `pages:read`, `pages:write`, and the built-in `users:manage` permission.
+
+Replace `apps/api/src/main.ts`:
+
+```ts
+import "./env";
+import { NestFactory } from "@nestjs/core";
+import { AppModule } from "./app.module";
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  app.enableShutdownHooks();
+  await app.listen(Number(process.env.PORT ?? 3000), "127.0.0.1");
+}
+void bootstrap();
+```
+
+Do not add a global `/api` prefix: CMS routes and the auth controller already
+include it. The generated `app.controller.ts` and `app.service.ts` are unused
+and can be deleted along with their generated test. Only the registered auth
+controller and CMS routes are needed here.
+
+### 6. Configure the admin and its API proxy
+
+Replace `apps/admin/next.config.ts`:
+
+```ts
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  basePath: "/admin",
+  async rewrites() {
+    return [
+      {
+        source: "/api/:path*",
+        destination: "http://127.0.0.1:3000/api/:path*",
+      },
+    ];
+  },
+};
+
+export default nextConfig;
+```
+
+Next.js adds `/admin` to the rewrite source, so the browser calls
+`/admin/api/pages` and the API receives `/api/pages`. This also keeps the login
+cookie on the admin origin. The frontend does not need to read the root `.env`.
+
+Create `apps/admin/src/sections/pages.ts`:
+
+```ts
+import { defineSection } from "@nestjs-cms/admin";
+
+export default defineSection({
+  key: "pages",
+  label: "Pages",
+  singular: "page",
+  description: "Manage page content and cover images.",
+  readPermission: "pages:read",
+  writePermission: "pages:write",
+  defaults: { title: "", status: "draft" },
+  listFields: [
+    { field: "title", label: "Title" },
+    { field: "status", label: "Status" },
+    { field: "cover", label: "Cover", type: "attachment" },
+  ],
+  searchFields: [{ field: "title", label: "Title", type: "text" }],
+  formFields: [
+    {
+      field: "title",
+      label: "Title",
+      type: "text",
+      required: true,
+      maxLength: 200,
+    },
+    {
+      field: "status",
+      label: "Status",
+      type: "select",
+      items: [
+        { value: "draft", label: "Draft" },
+        { value: "published", label: "Published" },
+      ],
+    },
+    {
+      field: "cover",
+      label: "Cover",
+      type: "attachment",
+      accept: "image/jpeg,image/png,image/webp",
+    },
+  ],
+});
+```
+
+Create `apps/admin/src/admin.config.ts`:
+
+```ts
+"use client";
+
+import { defineAdmin, createAuthSections } from "@nestjs-cms/admin";
+import pages from "./sections/pages";
+
+export default defineAdmin({
+  title: "My CMS",
+  apiBaseUrl: "/admin/api",
+  defaultSection: "pages",
+  sections: [
+    pages,
+    ...createAuthSections([
+      { value: "pages:read", label: "View pages" },
+      { value: "pages:write", label: "Edit pages" },
+    ]),
+  ],
+});
+```
+
+Replace `apps/admin/src/app/page.tsx`:
+
+```tsx
+"use client";
+
+import { AdminPortal } from "@nestjs-cms/admin";
+import config from "../admin.config";
+
+export default function Page() {
+  return <AdminPortal config={config} />;
+}
+```
+
+Replace `apps/admin/src/app/layout.tsx`:
+
+```tsx
+import type { ReactNode } from "react";
+import { AppRouterCacheProvider } from "@mui/material-nextjs/v16-appRouter";
+import "@nestjs-cms/admin/styles.css";
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        <AppRouterCacheProvider options={{ enableCssLayer: true }}>
+          {children}
+        </AppRouterCacheProvider>
+      </body>
+    </html>
+  );
+}
+```
+
+The package supplies its theme and CSS. The generated Next.js starter stylesheet
+and font imports are not needed. No Tailwind configuration is required.
+
+### 7. Start, sign in, and create a page
+
+With Docker services healthy, run these commands in two terminals from the root:
+
+```sh
+# Terminal 1
+npm run dev:api
+```
+
+```sh
+# Terminal 2
+npm run dev:admin
+```
+
+Open **http://localhost:3001/admin**. Sign in with `ADMIN_BOOTSTRAP_EMAIL` and
+`ADMIN_BOOTSTRAP_PASSWORD` from `.env`. Create a page, enter a title, choose a status, select
+a cover image, and save. Reopen it to check that its content and image were saved.
+Create an Editor role with both page permissions in **Roles**, then create a
+user with that role and a password in **Users**. Sign in as that user to check
+restricted access. Remove both bootstrap variables after the first successful
+startup. Sessions and accounts persist across API restarts.
+
+Use the `localhost` browser address shown above: `ADMIN_ORIGIN` must match it
+exactly. The API is at `http://127.0.0.1:3000/api`, but direct unauthenticated
+requests return 401. Browser requests, including images, go through
+`http://localhost:3001/admin/api/*`, where the session cookie is available.
+
+If login fails, check the credentials and API logs; after ten login attempts in
+one minute, wait a minute before retrying. If uploads return 503, check
+`docker compose logs minio-init` and the S3 values in `.env`. If the database port
+is occupied, change `DB_PORT` and recreate the Compose services. If you change
+`PORT`, update the Next.js rewrite destination too.
+
+### 8. Build and extend the starter
+
+Check and build both apps:
+
+```sh
+npm run typecheck:admin
+npm run build
+```
+
+To smoke-test the compiled API locally, stop `dev:api` and run `npm run start:api`
+with `NODE_ENV=development`; keep `dev:admin` running. Use `start:admin` for the
+built frontend. A production deployment must use HTTPS and the settings below.
+
+Add more backend files in `apps/api/src/resources` and corresponding frontend
+sections in `apps/admin/src/sections`; import each section into `admin.config.ts`
+and add it to `sections` in navigation order. Restart the API after adding a
+resource. See [resource definitions](docs/resources.md) and
+[admin configuration](packages/admin/README.md) for categories, grouped forms,
+nested fields, and custom dashboards. New resources default to `<resource>:read` and `<resource>:write` permissions.
+Add those permission choices to `createAuthSections`, and grant them to the
+appropriate roles. Existing roles are never silently granted new permissions.
+
+For deployment, set `NODE_ENV=production`, use HTTPS and a public HTTPS
+`ADMIN_ORIGIN`, set `DB_SYNCHRONIZE=false`, and apply reviewed migrations for
+all resource and authentication tables. The core currently also requires a
+server-only `ADMIN_API_KEY` of at least 32 characters. Update the Next.js proxy
+if the API runs on another host. See the
+[auth package guide](packages/auth/README.md) for migrations, sessions, permission
+mappings, and deployment details, and [operations](docs/operations.md) for storage.
+
+Stop infrastructure with `docker compose down`. Volumes preserve the database and
+attachments; `docker compose down -v` deletes both. Changing credentials in `.env`
+does not change the credentials already initialized in a PostgreSQL volume.
+
 ## Build your own CMS repository
 
 This walkthrough uses `kongyim/nestjs-cms-demo` as a starting template for your own
@@ -184,9 +752,8 @@ All package installation commands use the latest releases from npm.
 
 The two packages have different responsibilities: `@nestjs-cms/core` supplies
 resource APIs and attachments; `@nestjs-cms/admin` supplies the React portal.
-The demo's application code supplies login, sessions, account bootstrap, and
-server-side permissions. Keep that code when using the demo as your template;
-installing the packages alone does not create an authenticated CMS.
+`@nestjs-cms/auth` supplies login, sessions, account bootstrap, built-in users and
+roles, and server-side permissions through one module registration.
 
 ### 1. Create your workspace from the demo
 
@@ -210,8 +777,7 @@ The workspace already includes the app configuration and root npm scripts:
 my-cms/
   apps/
     api/
-      src/auth/          Login, sessions, passwords, and permission enforcement
-      src/resources/     Backend schemas for pages, categories, roles, and users
+      src/resources/     Backend schemas for pages and categories
       src/app.module.ts  CMS and authentication registration
       src/env.ts         Loads the shared root .env
     admin/
@@ -235,7 +801,7 @@ below use the template's existing `@nestjs-cms-demo/api` and
 From `my-cms`, update both workspaces:
 
 ```sh
-npm install @nestjs-cms/core@latest --workspace=@nestjs-cms-demo/api
+npm install @nestjs-cms/core@latest @nestjs-cms/auth@latest --workspace=@nestjs-cms-demo/api
 npm install @nestjs-cms/admin@latest --workspace=@nestjs-cms-demo/admin
 ```
 
@@ -247,8 +813,8 @@ replace all imports from `'nestjs-cms'` with `'@nestjs-cms/core'` in
 npm uninstall nestjs-cms --workspace=@nestjs-cms-demo/api
 ```
 
-Only the package name changes; keep the demo's resource definitions and
-authentication wiring. No local tarballs or library checkout are needed. Commit
+For an older demo checkout with copied auth files, follow the migration steps in
+[the auth package guide](packages/auth/README.md#migrating-the-demo). No local tarballs or library checkout are needed. Commit
 the updated package files and root lockfile with your application.
 
 ### 3. Configure the database, storage, and first administrator
@@ -361,14 +927,14 @@ browser requests through the admin URL. No separate browser CORS setup is needed
 
 Start with these files:
 
-| Change                                           | File or directory                         |
-| ------------------------------------------------ | ----------------------------------------- |
-| Portal title, initial screen, navigation order   | `apps/admin/src/admin.config.ts`          |
-| Dashboard content                                | `apps/admin/src/components/dashboard.tsx` |
-| Backend fields, validation, filters, attachments | `apps/api/src/resources/`                 |
-| List columns, search controls, form fields       | `apps/admin/src/sections/`                |
-| Server-side resource permissions                 | `apps/api/src/auth/auth.guard.ts`         |
-| Admin URL prefix and API destination             | `apps/admin/next.config.ts`               |
+| Change                                           | File or directory                                     |
+| ------------------------------------------------ | ----------------------------------------------------- |
+| Portal title, initial screen, navigation order   | `apps/admin/src/admin.config.ts`                      |
+| Dashboard content                                | `apps/admin/src/components/dashboard.tsx`             |
+| Backend fields, validation, filters, attachments | `apps/api/src/resources/`                             |
+| List columns, search controls, form fields       | `apps/admin/src/sections/`                            |
+| Server-side resource permissions                 | `resourcePermissions` in `apps/api/src/app.module.ts` |
+| Admin URL prefix and API destination             | `apps/admin/next.config.ts`                           |
 
 For example, change the `title` in `admin.config.ts` and reorder its `sections`
 array to rearrange navigation. `defaultSection` selects the first screen without
@@ -380,7 +946,7 @@ using [the resource guide](docs/resources.md), then create a matching frontend
 section whose `key` is the resource name. Import the section in `admin.config.ts`
 and add it to `sections`. Backend resources are discovered automatically on
 restart; frontend sections are registered explicitly. Match form fields to the
-backend schema, and update the host guard and role permissions for the new
+backend schema, and update the module permission mapping and role permissions for the new
 resource. Hiding navigation alone does not restrict API access.
 
 The [admin package guide](packages/admin/README.md) covers grouped forms,
@@ -459,10 +1025,10 @@ npm ci
 npm pack
 ```
 
-This builds `nestjs-cms-core-0.1.0.tgz`, including JavaScript and TypeScript declarations. In the new NestJS project, replace the npm installation step with:
+This builds `nestjs-cms-core-0.1.3.tgz`, including JavaScript and TypeScript declarations. In the new NestJS project, replace the npm installation step with:
 
 ```sh
-npm install /absolute/path/to/nestjs-cms-core-0.1.0.tgz
+npm install /absolute/path/to/nestjs-cms-core-0.1.3.tgz
 ```
 
 The package excludes the demo application, demo resources, demo migrations, tests, and local secrets. Packing does not publish anything to a registry.
@@ -498,10 +1064,12 @@ output, or use a locally packed package as described above.
 
 ## Publishing updates to npm
 
-For the first release under the new name, run `npm run release:check` and
-`npm run release` from the repository root. Version `0.1.0` can be used because
-`@nestjs-cms/core` is a separate npm package from `nestjs-cms` (provided that
-version has not already been published under the new name).
+The authentication package requires the new core integration API. Publish
+`@nestjs-cms/core` 0.1.3 first, then `@nestjs-cms/auth` 0.1.0 and
+`@nestjs-cms/admin` 0.1.2. Their versions are already prepared in this checkout;
+run `release:check` and `release` in each package directory without bumping them
+again unless that version has already been published. Nothing is published by
+`release:check`.
 
 After confirming `npm view @nestjs-cms/core version` returns the new release,
 the owner of the old package can mark it deprecated:
@@ -513,9 +1081,9 @@ npm deprecate 'nestjs-cms@*' 'Renamed to @nestjs-cms/core. Install @nestjs-cms/c
 This keeps existing versions available while directing users to the new package.
 For subsequent releases, follow the steps below.
 
-
 Run the following commands in the package you changed: the repository root for
-`@nestjs-cms/core`, or `packages/admin` for `@nestjs-cms/admin`. The packages have
+`@nestjs-cms/core`, `packages/auth` for `@nestjs-cms/auth`, or
+`packages/admin` for `@nestjs-cms/admin`. The packages have
 independent versions; release only the packages you changed.
 
 ```sh
@@ -557,13 +1125,18 @@ publication rules.
 
 ## Documentation
 
+- [Authentication, users, roles, and sessions](packages/auth/README.md)
 - [Resource definitions, hooks, and service methods](docs/resources.md)
 - [API contract and frontend examples](docs/api.md)
 - [Environment, databases, storage, and deployment](docs/operations.md)
 
 `ResourceService` is exported for use in other application services. It provides CRUD and `createAttachment`, `findAttachment`, `downloadAttachment`, and `removeAttachment`. All browser attachment traffic goes through the backend API.
 
-User login, roles, and resource rights are not implemented. Setting `ADMIN_API_KEY` requires `X-API-Key` on CMS requests; production currently requires a key of at least 32 characters. This is an integration mechanism, not a full authentication system.
+User login, roles, sessions, and resource permissions are provided by the optional
+[`@nestjs-cms/auth`](packages/auth/README.md) package. Core alone uses API-key
+authentication; production requires a server-only key of at least 32 characters.
+The auth package validates the session and permissions before supplying that key
+internally. It never exposes the key to the browser.
 
 ## Develop this library
 
@@ -595,7 +1168,7 @@ Integration tests use the dedicated `cms_test` database and real MinIO services.
 
 ## Scope
 
-The package implements resource discovery, CRUD, filters, transactional hooks, and backend-managed attachments. Import/export, image resizing, encrypted/hashed fields, automatic relation expansion, and resource permissions are not included. Multilingual and nested fields use JSON. See the [comparison with the original project](docs/resources.md#comparison-with-the-original-project) for differences from `polyu-souvenirs`.
+The package implements resource discovery, CRUD, filters, transactional hooks, and backend-managed attachments. Import/export, image resizing, encrypted/hashed fields, and automatic relation expansion are not included in core. Resource permissions are available through `@nestjs-cms/auth`. Multilingual and nested fields use JSON. See the [comparison with the original project](docs/resources.md#comparison-with-the-original-project) for differences from `polyu-souvenirs`.
 
 ## Reusable admin frontend
 

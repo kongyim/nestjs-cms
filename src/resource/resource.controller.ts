@@ -14,6 +14,7 @@ import {
   Header,
   UseGuards,
   UseFilters,
+  SetMetadata,
 } from "@nestjs/common";
 import { ApiKeyGuard } from "../api-key.guard";
 import { ErrorFilter } from "../error.filter";
@@ -23,6 +24,7 @@ import type { UploadedAttachment } from "./resource.types";
 import { ResourceRegistry } from "./resource.registry";
 import { ResourceService } from "./resource.service";
 @Controller("api")
+@SetMetadata("nestjs-cms:resource-controller", true)
 @UseGuards(ApiKeyGuard)
 @UseFilters(ErrorFilter)
 export class ResourceController {

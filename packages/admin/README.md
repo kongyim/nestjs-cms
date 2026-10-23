@@ -41,27 +41,27 @@ React 19 and React DOM 19, which this Next.js App Router setup uses.
 Create `src/admin.config.ts`:
 
 ```ts
-'use client';
+"use client";
 
-import { defineAdmin, defineSection } from '@nestjs-cms/admin';
+import { defineAdmin, defineSection } from "@nestjs-cms/admin";
 
 const pages = defineSection({
-  key: 'pages',
-  label: 'Pages',
-  singular: 'page',
-  readPermission: 'pages:read',
-  writePermission: 'pages:write',
-  defaults: { title: '' },
-  listFields: [{ field: 'title', label: 'Title' }],
+  key: "pages",
+  label: "Pages",
+  singular: "page",
+  readPermission: "pages:read",
+  writePermission: "pages:write",
+  defaults: { title: "" },
+  listFields: [{ field: "title", label: "Title" }],
   formFields: [
-    { field: 'title', label: 'Title', type: 'text', required: true },
+    { field: "title", label: "Title", type: "text", required: true },
   ],
 });
 
 export default defineAdmin({
-  title: 'My Admin',
-  apiBaseUrl: '/api',
-  defaultSection: 'pages',
+  title: "My Admin",
+  apiBaseUrl: "/api",
+  defaultSection: "pages",
   sections: [pages],
 });
 ```
@@ -76,10 +76,10 @@ boundary because actions and renderers can contain functions.
 Replace `src/app/page.tsx` with:
 
 ```tsx
-'use client';
+"use client";
 
-import { AdminPortal } from '@nestjs-cms/admin';
-import config from '../admin.config';
+import { AdminPortal } from "@nestjs-cms/admin";
+import config from "../admin.config";
 
 export default function Page() {
   return <AdminPortal config={config} />;
@@ -89,9 +89,9 @@ export default function Page() {
 Replace `src/app/layout.tsx` with:
 
 ```tsx
-import type { ReactNode } from 'react';
-import { AppRouterCacheProvider } from '@mui/material-nextjs/v15-appRouter';
-import '@nestjs-cms/admin/styles.css';
+import type { ReactNode } from "react";
+import { AppRouterCacheProvider } from "@mui/material-nextjs/v15-appRouter";
+import "@nestjs-cms/admin/styles.css";
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
@@ -115,14 +115,14 @@ theme later with `config.theme`.
 Replace `next.config.ts` at the project root with:
 
 ```ts
-import type { NextConfig } from 'next';
+import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   async rewrites() {
     return [
       {
-        source: '/api/:path*',
-        destination: 'http://localhost:3000/api/:path*',
+        source: "/api/:path*",
+        destination: "http://localhost:3000/api/:path*",
       },
     ];
   },
@@ -156,7 +156,7 @@ without framework routing integration.
 
 The default client sends same-origin credentials and `X-CMS-Request: 1`. CRUD responses must follow the nestjs-cms format (`{ data, meta }` for lists). `apiBaseUrl` applies to JSON requests and attachment previews/downloads.
 
-Default session authentication expects `GET /auth/me`, `POST /auth/login` with `{ email, password }`, and `POST /auth/logout`. Identity is `{ id, email, displayName, permissions: string[] }`. These endpoints are provided by the demo backend, **not** by the `@nestjs-cms/core` package. Other backends can supply `auth: (api) => ({ getIdentity, login, logout })`.
+Default session authentication expects `GET /auth/me`, `POST /auth/login` with `{ email, password }`, and `POST /auth/logout`. Identity is `{ id, email, displayName, permissions: string[] }`. These endpoints are provided by [`@nestjs-cms/auth`](../auth/README.md), **not** by the `@nestjs-cms/core` package. Other backends can supply `auth: (api) => ({ getIdentity, login, logout })`.
 
 Provide `request: ApiClient` to replace the transport, or build one with `createApiClient({ baseUrl, credentials, headers, fetch, onUnauthorized })`. A custom transport should handle its own session-expiration behavior. Use `attachmentUrl(path)` if previews/downloads need a different URL. Image/download requests use browser URLs, not the JSON adapter; for header-based authentication, provide an authenticated same-origin endpoint or an appropriate download URL.
 
@@ -250,7 +250,7 @@ npm pack
 your consuming application, replacing the path with its actual location:
 
 ```sh
-npm install /path/to/nestjs-cms/packages/admin/nestjs-cms-admin-0.1.0.tgz
+npm install /path/to/nestjs-cms/packages/admin/nestjs-cms-admin-0.1.2.tgz
 ```
 
 ## Publishing updates to npm
@@ -281,7 +281,7 @@ and recovery steps.
 Use `defineCustomSection` for dashboards, reports, or other React pages:
 
 ```tsx
-import { defineAdmin, defineCustomSection, useAdmin } from '@nestjs-cms/admin';
+import { defineAdmin, defineCustomSection, useAdmin } from "@nestjs-cms/admin";
 
 function Dashboard() {
   const { config, api } = useAdmin();
@@ -290,15 +290,15 @@ function Dashboard() {
 }
 
 const dashboard = defineCustomSection({
-  key: 'dashboard',
-  label: 'Dashboard',
+  key: "dashboard",
+  label: "Dashboard",
   component: Dashboard,
   // readPermission: 'dashboard:read',
 });
 
 export default defineAdmin({
   sections: [dashboard], // May be mixed with existing defineSection() resources.
-  defaultSection: 'dashboard',
+  defaultSection: "dashboard",
 });
 ```
 
@@ -311,3 +311,26 @@ exposes the configured `api` and `config`, and must be used inside `AdminPortal`
 Existing `SectionConfig` remains the resource type; `AdminSectionConfig` is the
 union of resource and custom sections. In Next.js, import configuration containing
 components from a client entry point, rather than passing it across a server boundary.
+
+## Built-in user and role editors
+
+When using `@nestjs-cms/auth`, add its management sections without copying forms:
+
+```ts
+import { defineAdmin, createAuthSections } from "@nestjs-cms/admin";
+
+export default defineAdmin({
+  apiBaseUrl: "/admin/api",
+  sections: [
+    ...createAuthSections([
+      { value: "pages:read", label: "View pages" },
+      { value: "pages:write", label: "Edit pages" },
+    ]),
+  ],
+});
+```
+
+This returns Roles then Users, protected by `users:manage`, with password actions
+and role selection already configured. Add your resource sections to the same
+array. Supply permission names matching your API configuration; `users:manage`
+is always included in the role editor. Backend authorization remains required.

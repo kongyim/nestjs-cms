@@ -1,8 +1,8 @@
-'use client';
-export { default as AdminPortal } from './admin-portal';
-export { default as AdminTheme } from './components/theme-provider';
-export { defineAdmin, defineSection, defineCustomSection } from './config';
-export type { AdminConfig, FieldRendererProps } from './config';
+"use client";
+export { default as AdminPortal } from "./admin-portal";
+export { default as AdminTheme } from "./components/theme-provider";
+export { defineAdmin, defineSection, defineCustomSection } from "./config";
+export type { AdminConfig, FieldRendererProps } from "./config";
 export type {
   SectionConfig,
   CustomSectionConfig,
@@ -17,8 +17,10 @@ export type {
   ResourceRecord,
   ResourceList,
   Option,
-} from './configs/types';
-export { createApiClient, createSessionAuth } from './lib/api';
-export type { ApiClient, ApiOptions, AuthAdapter, Identity } from './lib/api';
+} from "./configs/types";
+export { createApiClient, createSessionAuth } from "./lib/api";
+export type { ApiClient, ApiOptions, AuthAdapter, Identity } from "./lib/api";
 
-export { useAdmin } from './runtime';
+export { useAdmin } from "./runtime";
+
+export { createAuthSections } from "./configs/auth";

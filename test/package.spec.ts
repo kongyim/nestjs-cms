@@ -14,3 +14,18 @@ it("exports the library API without discovering resources or importing the demo 
     discover.mockRestore();
   }
 });
+
+it("accepts explicit resources and rejects duplicate names before connecting", () => {
+  const { ResourceModule, defineResource, z } = require("../src/index");
+  const pages = defineResource({
+    name: "pages",
+    schema: z.object({ title: z.string() }),
+    columns: { title: { type: String } },
+  });
+  expect(
+    ResourceModule.forRoot({ resources: [pages] }).controllers,
+  ).toHaveLength(1);
+  expect(() => ResourceModule.forRoot({ resources: [pages, pages] })).toThrow(
+    "Duplicate resource name",
+  );
+});
