@@ -275,3 +275,39 @@ new version. If publishing fails, retry `npm run release` without another bump
 as long as that version was not published. See the repository's
 [publishing guide](../../README.md#publishing-updates-to-npm) for version choices
 and recovery steps.
+
+## Custom pages
+
+Use `defineCustomSection` for dashboards, reports, or other React pages:
+
+```tsx
+import { defineAdmin, defineCustomSection, useAdmin } from '@nestjs-cms/admin';
+
+function Dashboard() {
+  const { config, api } = useAdmin();
+  // Use api<T>('/your-endpoint') in an effect or event handler to load data.
+  return <h1>{config.title}</h1>;
+}
+
+const dashboard = defineCustomSection({
+  key: 'dashboard',
+  label: 'Dashboard',
+  component: Dashboard,
+  // readPermission: 'dashboard:read',
+});
+
+export default defineAdmin({
+  sections: [dashboard], // May be mixed with existing defineSection() resources.
+  defaultSection: 'dashboard',
+});
+```
+
+Custom components render inside the authenticated shell and theme at `#/dashboard`.
+`readPermission` uses the same access policy as resource sections; omitting it
+allows any signed-in user under the default policy. Backend endpoints must enforce
+their own permissions. Custom pages do not require CRUD fields or issue automatic
+resource requests. They own their heading, loading, and error UI. `useAdmin()`
+exposes the configured `api` and `config`, and must be used inside `AdminPortal`.
+Existing `SectionConfig` remains the resource type; `AdminSectionConfig` is the
+union of resource and custom sections. In Next.js, import configuration containing
+components from a client entry point, rather than passing it across a server boundary.

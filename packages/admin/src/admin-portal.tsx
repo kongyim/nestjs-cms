@@ -5,7 +5,7 @@ import { createApiClient, createSessionAuth, type Identity } from './lib/api';
 import { AdminContext } from './runtime';
 import { defineAdmin, type AdminConfig } from './config';
 import AdminTheme from './components/theme-provider';
-import ResourceSection from './components/resource-section';
+import SectionContent from './components/section-content';
 import {
   Alert,
   Avatar,
@@ -209,9 +209,9 @@ export default function AdminPortal({
         </Typography>
       </div>
       <Typography variant="overline" color="text.secondary" className="px-3">
-        Resources
+        Sections
       </Typography>
-      <List component="nav" aria-label="Resources" className="flex-1">
+      <List component="nav" aria-label="Sections" className="flex-1">
         {available.map((entry) => (
           <ListItemButton
             key={entry.key}
@@ -266,7 +266,7 @@ export default function AdminPortal({
           <Button
             className="md:hidden"
             onClick={() => setMobileOpen(true)}
-            aria-label="Open resource navigation"
+            aria-label="Open section navigation"
           >
             Menu
           </Button>
@@ -281,11 +281,14 @@ export default function AdminPortal({
             </Alert>
           )}
           {section ? (
-            <ResourceSection
+            <SectionContent
               key={`${user.id}:${section.key}`}
               section={section}
               recordId={section.key === route.section ? route.record : null}
-              canWrite={canAccess(user, section.writePermission)}
+              canWrite={
+                section.type !== 'custom' &&
+                canAccess(user, section.writePermission)
+              }
               onAccessChange={refreshAccess}
             />
           ) : (

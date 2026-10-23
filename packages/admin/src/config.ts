@@ -1,7 +1,13 @@
 import { flattenFields, validateLayout } from './lib/form-layout';
 import type { ComponentType } from 'react';
 import type { ThemeOptions } from '@mui/material/styles';
-import type { FormField, FormValues, SectionConfig } from './configs/types';
+import type {
+  AdminSectionConfig,
+  CustomSectionConfig,
+  FormField,
+  FormValues,
+  SectionConfig,
+} from './configs/types';
 import type { ApiClient, AuthAdapter, Identity } from './lib/api';
 
 export type FieldRendererProps = {
@@ -15,7 +21,7 @@ export type AdminConfig = {
   subtitle?: string;
   loginDescription?: string;
   apiBaseUrl?: string;
-  sections: SectionConfig[];
+  sections: AdminSectionConfig[];
   defaultSection?: string;
   request?: ApiClient;
   auth?: (api: ApiClient) => AuthAdapter;
@@ -38,10 +44,19 @@ export function defineSection(section: SectionConfig): SectionConfig {
   return section;
 }
 
+export function defineCustomSection(
+  section: Omit<CustomSectionConfig, 'type'>,
+): CustomSectionConfig {
+  if (!section.component)
+    throw new Error(`Custom section ${section.key} needs a component.`);
+  return { ...section, type: 'custom' };
+}
+
 export function defineAdmin(config: AdminConfig): AdminConfig {
   const keys = new Set<string>();
   for (const section of config.sections) {
-    defineSection(section);
+    if (section.type === 'custom') defineCustomSection(section);
+    else defineSection(section);
     if (!/^[a-z][a-z0-9_]*$/.test(section.key))
       throw new Error(`Invalid section key: ${section.key}`);
     if (keys.has(section.key))

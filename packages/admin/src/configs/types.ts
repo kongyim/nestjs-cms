@@ -1,3 +1,5 @@
+import type { ComponentType } from 'react';
+
 export type FieldValue =
   | string
   | number
@@ -66,6 +68,7 @@ export type FormField = {
   itemsFrom?: { resource: string; labelField: string };
 };
 export type SectionConfig = {
+  type?: 'resource';
   key: string;
   label: string;
   singular: string;
@@ -88,3 +91,15 @@ export type SectionConfig = {
   }[];
   formFields: FormItem[];
 };
+
+/** A custom page rendered inside the authenticated admin shell. */
+export type CustomSectionConfig = {
+  type: 'custom';
+  key: string;
+  label: string;
+  description?: string;
+  readPermission?: string;
+  component: ComponentType;
+};
+
+export type AdminSectionConfig = SectionConfig | CustomSectionConfig;
