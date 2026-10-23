@@ -1,3 +1,4 @@
+import type { AuthResourceExtensions } from "./resource-extension";
 import type { ResourceDefinition } from "@nestjs-cms/core";
 import { z } from "@nestjs-cms/core";
 
@@ -5,6 +6,8 @@ export interface CmsAuthOptions {
   resourcesPath?: string;
   extension?: ".ts" | ".js";
   resources?: ResourceDefinition[];
+  /** Add fields to the built-in users and roles without replacing auth fields. */
+  resourceExtensions?: AuthResourceExtensions;
   /** Exact browser origin, without the admin path. */
   adminOrigin: string;
   /** Browser-facing admin prefix. Defaults to /admin; use '' for the root. */

@@ -1,3 +1,4 @@
+import { extendAuthResource } from "./resource-extension";
 import { DynamicModule, Module } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import {
@@ -25,11 +26,18 @@ export function createAuthDataSource(
       : []),
     ...(options.resources ?? []),
   ];
+  for (const name of Object.keys(options.resourceExtensions ?? {})) {
+    if (name !== "users" && name !== "roles")
+      throw new Error(`Unknown auth resource extension: ${name}`);
+  }
   const resolved = resolveOptions(options, applicationResources);
   const resources = [
     ...applicationResources,
-    createRolesResource(resolved.permissions),
-    users,
+    extendAuthResource(
+      createRolesResource(resolved.permissions),
+      options.resourceExtensions?.roles,
+    ),
+    extendAuthResource(users, options.resourceExtensions?.users),
   ];
   const dataSource = createCmsDataSource(resources, database);
   dataSource.setOptions({

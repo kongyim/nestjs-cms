@@ -7,10 +7,9 @@ import {
 } from "@nestjs/common";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DataSource, LessThan } from "typeorm";
-import { z } from "@nestjs-cms/core";
+import { z, ResourceRegistry } from "@nestjs-cms/core";
 import { Credential, Session } from "./auth.entities";
 import { hashPassword, verifyPassword } from "./password";
-import users from "./resources/users";
 import { AUTH_OPTIONS, ResolvedAuthOptions } from "./options";
 
 type UserRow = {
@@ -38,6 +37,7 @@ export class AuthService implements OnModuleInit {
   private dummyHash!: string;
   constructor(
     private readonly db: DataSource,
+    private readonly registry: ResourceRegistry,
     @Inject(AUTH_OPTIONS) readonly options: ResolvedAuthOptions,
   ) {}
 
@@ -58,8 +58,10 @@ export class AuthService implements OnModuleInit {
       if (!role)
         role = await roles.save({
           id: randomUUID(),
-          name: "Administrator",
-          permissions: [...this.options.permissions],
+          ...this.registry.get("roles").schema.parse({
+            name: "Administrator",
+            permissions: [...this.options.permissions],
+          }),
         });
       if (
         !this.options.permissions.every((permission) =>
@@ -69,7 +71,7 @@ export class AuthService implements OnModuleInit {
         throw new Error(
           "Existing Administrator role lacks bootstrap permissions.",
         );
-      const user = users.schema.parse({
+      const user = this.registry.get("users").schema.parse({
         email,
         displayName:
           this.options.bootstrapAdmin?.displayName ?? "Administrator",

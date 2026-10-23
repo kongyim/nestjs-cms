@@ -266,3 +266,32 @@ publishing is performed by a build or test command.
 
 The demo in the sibling checkout can be tested with locally packed versions before
 publishing. Consumer documentation assumes the releases are available from npm.
+
+## Extend users and roles
+
+`CmsAuthModule.forRoot` and `createAuthDataSource` accept `resourceExtensions`:
+
+```ts
+resourceExtensions: {
+  users: {
+    schema: z.object({ phone: z.string().max(30).nullable().default(null) }),
+    columns: { phone: { type: String, length: 30, nullable: true } },
+    filterable: ['phone'],
+  },
+  roles: {
+    schema: z.object({ description: z.string().max(500).nullable().default(null) }),
+    columns: { description: { type: String, length: 500, nullable: true } },
+  },
+}
+```
+
+Import `z` from `@nestjs-cms/core`. Extensions add schema fields and matching columns,
+and may append filterable/sortable fields. Existing auth fields, resource names,
+foreign keys, and permissions remain controlled by the package. Field validators
+must accept omitted values through defaults or optional schemas; omitted/null values
+need nullable or database-defaulted columns. Bootstrap uses the extended schemas.
+Object-level extension refinements are not merged: define validation on each field.
+Generate/review a database migration using the same options with
+`createAuthDataSource`; SQL column defaults or a backfill may be needed for existing
+rows. Schema defaults alone do not backfill a database. Extra fields are available
+on resource endpoints, not automatically added to the authentication identity.

@@ -334,3 +334,26 @@ This returns Roles then Users, protected by `users:manage`, with password action
 and role selection already configured. Add your resource sections to the same
 array. Supply permission names matching your API configuration; `users:manage`
 is always included in the role editor. Backend authorization remains required.
+
+## Add fields to auth editors
+
+Pass an optional second argument to `createAuthSections(permissions, extensions)`:
+
+```ts
+createAuthSections([], {
+  users: {
+    defaults: { phone: null },
+    formFields: [{ field: 'phone', label: 'Phone', type: 'text', nullable: true }],
+    listFields: [{ field: 'phone', label: 'Phone' }],
+  },
+  roles: {
+    defaults: { description: null },
+    formFields: [{ field: 'description', label: 'Description', type: 'textarea', nullable: true }],
+  },
+});
+```
+
+Defaults are merged; form, list, and search fields are appended. Built-in form
+fields/defaults cannot be overridden. Existing calls without extensions retain
+their behavior. Configure matching `resourceExtensions` in `@nestjs-cms/auth`
+and migrate the database before saving these fields.

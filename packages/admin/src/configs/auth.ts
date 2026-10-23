@@ -1,3 +1,55 @@
+import type { SectionConfig } from "./types";
+import { flattenFields } from "../lib/form-layout";
+
+export type AuthSectionExtension = Partial<
+  Pick<SectionConfig, "defaults" | "formFields" | "listFields" | "searchFields">
+>;
+export type AuthSectionExtensions = Partial<
+  Record<"users" | "roles", AuthSectionExtension>
+>;
+
+function extendSection(
+  base: SectionConfig,
+  extra?: AuthSectionExtension,
+): SectionConfig {
+  if (!extra) return base;
+  const protectedFields = new Set([
+    ...Object.keys(base.defaults),
+    ...flattenFields(base.formFields).map((field) => field.field),
+    "id",
+    "createdAt",
+    "updatedAt",
+    "attachments",
+    "__proto__",
+    "constructor",
+    "prototype",
+  ]);
+  for (const field of [
+    ...Object.keys(extra.defaults ?? {}),
+    ...flattenFields(extra.formFields ?? []).map((field) => field.field),
+  ]) {
+    if (protectedFields.has(field.split(".")[0]))
+      throw new Error(`Cannot override auth field ${base.key}.${field}.`);
+  }
+  for (const property of ["listFields", "searchFields"] as const) {
+    const fields = new Set(base[property].map((field) => field.field));
+    for (const field of extra[property] ?? []) {
+      if (fields.has(field.field))
+        throw new Error(
+          `Duplicate ${property} field ${base.key}.${field.field}.`,
+        );
+      fields.add(field.field);
+    }
+  }
+  return defineSection({
+    ...base,
+    defaults: { ...base.defaults, ...extra.defaults },
+    formFields: [...base.formFields, ...(extra.formFields ?? [])],
+    listFields: [...base.listFields, ...(extra.listFields ?? [])],
+    searchFields: [...base.searchFields, ...(extra.searchFields ?? [])],
+  });
+}
+
 import { defineSection } from "../config";
 const roleOptions = { resource: "roles", labelField: "name" };
 const users = () =>
@@ -106,6 +158,7 @@ const roles = (permissions: { value: string; label: string }[]) =>
 /** Add the built-in user and role editors for @nestjs-cms/auth. */
 export function createAuthSections(
   permissions: { value: string; label: string }[],
+  extensions: AuthSectionExtensions = {},
 ) {
   const choices = [...permissions];
   if (!choices.some((permission) => permission.value === "users:manage")) {
@@ -114,5 +167,8 @@ export function createAuthSections(
       label: "Manage users, passwords, and roles",
     });
   }
-  return [roles(choices), users()];
+  return [
+    extendSection(roles(choices), extensions.roles),
+    extendSection(users(), extensions.users),
+  ];
 }

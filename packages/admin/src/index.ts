@@ -24,3 +24,5 @@ export type { ApiClient, ApiOptions, AuthAdapter, Identity } from "./lib/api";
 export { useAdmin } from "./runtime";
 
 export { createAuthSections } from "./configs/auth";
+
+export type { AuthSectionExtension, AuthSectionExtensions } from "./configs/auth";
