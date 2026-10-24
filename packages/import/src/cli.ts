@@ -3,9 +3,7 @@ import "reflect-metadata";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { createAuthDataSource, CmsAuthOptions } from "@nestjs-cms/auth";
-import { ResourceRegistry } from "@nestjs-cms/core";
-import { DatabaseImporter } from "./importer";
+import type { CmsAuthOptions } from "@nestjs-cms/auth";
 import { importOptionsFromEnv } from "./options";
 
 export async function main(args = process.argv.slice(2)) {
@@ -38,6 +36,10 @@ export async function main(args = process.argv.slice(2)) {
   const { authConfig } = appRequire(configPath) as { authConfig?: CmsAuthOptions };
   if (!authConfig || typeof authConfig !== "object" || Array.isArray(authConfig))
     throw new Error("The configuration file must export an authConfig object.");
+  // The host configuration loads its environment before CMS modules capture settings.
+  const { createAuthDataSource } = require("@nestjs-cms/auth") as typeof import("@nestjs-cms/auth");
+  const { ResourceRegistry } = require("@nestjs-cms/core") as typeof import("@nestjs-cms/core");
+  const { DatabaseImporter } = require("./importer") as typeof import("./importer");
   const { dataSource, resources } = createAuthDataSource(authConfig);
   dataSource.setOptions({ synchronize: false });
   await dataSource.initialize();

@@ -1,3 +1,4 @@
+import { matchesMimeType } from "./mime-type";
 import {
   BadRequestException,
   Injectable,
@@ -103,7 +104,7 @@ export class AttachmentService {
           .string()
           .max(120)
           .refine(
-            (v) => definition.mimeTypes.includes(v),
+            (v) => matchesMimeType(v, definition.mimeTypes),
             "Unsupported MIME type",
           ),
         size: z.number().int().min(1),

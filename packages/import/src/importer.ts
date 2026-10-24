@@ -1,5 +1,5 @@
 import { AttachmentService } from "@nestjs-cms/core";
-import { downloadAttachment } from "./download";
+import { AttachmentDownloadError, downloadAttachment } from "./download";
 import { importRecordId } from "./plan";
 import { getPath, setPath } from "./cells";
 import { ConflictException, ForbiddenException } from "@nestjs/common";
@@ -97,12 +97,14 @@ export class DatabaseImporter {
               (await storage.hasImported(id, row.resource, row.id, field.field))
             )
               continue;
+            let phase = "download";
             try {
               const file = await this.download(
                 url,
                 field,
                 storage.importMaxBytes(row.resource, field.field),
               );
+              phase = "storage staging";
               if (!result.dryRun)
                 staged.push({
                   row,
@@ -114,9 +116,14 @@ export class DatabaseImporter {
                     file,
                   ),
                 });
-            } catch {
+            } catch (error) {
+              const detail = error instanceof AttachmentDownloadError
+                ? error.message
+                : phase === "storage staging"
+                  ? "Storage staging failed. Check the attachment database and object storage endpoint, bucket, and credentials."
+                  : "Download failed. Check the public direct file URL, MIME type, and size.";
               throw new Error(
-                `${row.resource} row ${row.row}, ${field.field}: could not import attachment. Check the public file URL, MIME type, size, and storage settings. No rows were imported.`,
+                `${row.resource} row ${row.row}, ${field.field}: could not import attachment. ${detail} No rows were imported.`,
               );
             }
           }

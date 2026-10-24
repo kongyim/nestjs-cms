@@ -8,12 +8,16 @@ const { join, resolve } = require('node:path');
 test('CLI validates arguments, forwards dry-run, disables sync and always closes initialized connections', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'cms-cli-'));
   const config = join(directory, 'auth.config.js');
-  writeFileSync(config, 'exports.authConfig = {};');
+  writeFileSync(config, 'process.env.CMS_CLI_ENV_TEST = "loaded"; exports.authConfig = {};');
   const events = [];
   let fail = false;
+  const previousMarker = process.env.CMS_CLI_ENV_TEST;
+  delete process.env.CMS_CLI_ENV_TEST;
   const originalLoad = Module._load;
   const originalLog = console.log;
   Module._load = function(id, ...rest) {
+    if (['@nestjs-cms/auth', '@nestjs-cms/core', './importer'].includes(id))
+      assert.equal(process.env.CMS_CLI_ENV_TEST, 'loaded', 'Host environment must load before CMS modules');
     if (id === '@nestjs-cms/auth') return { createAuthDataSource() {
       return { resources: [], dataSource: {
         setOptions(options) { events.push(options); },
@@ -47,6 +51,8 @@ test('CLI validates arguments, forwards dry-run, disables sync and always closes
     writeFileSync(join(directory, 'invalid.js'), 'exports.other = {};');
     await assert.rejects(main(['--config', join(directory, 'invalid.js')]), /authConfig object/);
   } finally {
+    if (previousMarker === undefined) delete process.env.CMS_CLI_ENV_TEST;
+    else process.env.CMS_CLI_ENV_TEST = previousMarker;
     Module._load = originalLoad;
     console.log = originalLog;
     if (oldKey === undefined) delete process.env.GSHEET_KEY_PATH;

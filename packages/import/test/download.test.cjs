@@ -69,16 +69,18 @@ test("downloads are bounded, MIME checked, DNS pinned, and redirects revalidated
     );
     assert.equal(file.originalname, "image.png");
     assert.equal(file.buffer.toString(), "image");
+    const wildcardFile = await downloadAttachment('https://example.com/image.png', { field: 'documents', mimeTypes: ['application/pdf', 'image/*'] }, 10);
+    assert.equal(wildcardFile.mimetype, 'image/png');
     await assert.rejects(
       downloadAttachment("https://example.com/image.png", field, 2),
-      /Could not download/,
+      /Attachment exceeds|not allowed|public addresses/,
     );
     for (mode of ["mime", "redirect", "private-dns"])
       await assert.rejects(
         downloadAttachment("https://example.com/image.png", field, 10),
-        /Could not download/,
+        /Attachment exceeds|not allowed|public addresses/,
       );
-    assert.equal(requests, 4);
+    assert.equal(requests, 5);
   } finally {
     dns.lookup = originalLookup;
     https.request = originalRequest;

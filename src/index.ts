@@ -18,3 +18,5 @@ export { loadResources } from "./resource/resource.loader";
 export { createCmsDataSource } from "./database/create-data-source";
 export { AttachmentService } from "./storage/attachment.service";
 export { configureCmsApp } from "./setup";
+
+export { matchesMimeType } from "./storage/mime-type";

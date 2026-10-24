@@ -1,8 +1,11 @@
+import { matchesMimeType } from "@nestjs-cms/core";
 import { lookup } from "node:dns/promises";
 import { BlockList, isIP } from "node:net";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import type { AttachmentField, UploadedAttachment } from "@nestjs-cms/core";
+
+export class AttachmentDownloadError extends Error {}
 
 const blocked = new BlockList();
 for (const [address, prefix] of [
@@ -42,14 +45,14 @@ export function attachmentUrl(value: string): URL {
     url.username ||
     url.password
   )
-    throw new Error("Expected an HTTP(S) file URL without credentials.");
+    throw new AttachmentDownloadError("Expected an HTTP(S) file URL without credentials.");
   const hostname = url.hostname.replace(/^\[|\]$/g, "");
   if (
     hostname === "localhost" ||
     hostname.endsWith(".localhost") ||
     (isIP(hostname) && !isPublicAddress(hostname))
   )
-    throw new Error("Attachment URLs must use public addresses.");
+    throw new AttachmentDownloadError("Attachment URLs must use public addresses.");
   url.hash = "";
   return url;
 }
@@ -69,11 +72,11 @@ export async function downloadAttachment(
     const addresses = await Promise.race([
       lookup(hostname, { all: true }),
       new Promise<never>((_, reject) => {
-        if (signal.aborted) reject(new Error("Attachment download timed out."));
+        if (signal.aborted) reject(new AttachmentDownloadError("Attachment download timed out."));
         else
           signal.addEventListener(
             "abort",
-            () => reject(new Error("Attachment download timed out.")),
+            () => reject(new AttachmentDownloadError("Attachment download timed out.")),
             { once: true },
           );
       }),
@@ -82,7 +85,7 @@ export async function downloadAttachment(
       !addresses.length ||
       addresses.some(({ address }) => !isPublicAddress(address))
     )
-      throw new Error("Attachment URLs must resolve to public addresses.");
+      throw new AttachmentDownloadError("Attachment URLs must resolve to public addresses.");
     const address = addresses[0];
     return new Promise((resolve, reject) => {
       const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(
@@ -104,7 +107,7 @@ export async function downloadAttachment(
           if ([301, 302, 303, 307, 308].includes(status)) {
             response.destroy();
             if (!response.headers.location || redirects >= 5)
-              return reject(new Error("Too many or invalid file redirects."));
+              return reject(new AttachmentDownloadError("Too many or invalid file redirects."));
             try {
               resolve(
                 read(
@@ -121,18 +124,18 @@ export async function downloadAttachment(
             .split(";")[0]
             .trim()
             .toLowerCase();
-          if (status !== 200 || !field.mimeTypes.includes(mimeType)) {
+          if (status !== 200 || !matchesMimeType(mimeType, field.mimeTypes)) {
             response.destroy();
             reject(
-              new Error(
-                "File URL must return a successful response with an allowed MIME type.",
+              new AttachmentDownloadError(
+                status !== 200 ? `File server returned HTTP ${status}.` : `File MIME type ${/^[a-z0-9.+-]+\/[a-z0-9.+-]+$/.test(mimeType) ? mimeType : "missing or invalid"} is not allowed for ${field.field}. Allowed: ${field.mimeTypes.join(", ")}.`,
               ),
             );
             return;
           }
           if (Number(response.headers["content-length"]) > maxBytes) {
             response.destroy();
-            reject(new Error("Attachment exceeds field size limit."));
+            reject(new AttachmentDownloadError("Attachment exceeds field size limit."));
             return;
           }
           const chunks: Buffer[] = [];
@@ -142,7 +145,7 @@ export async function downloadAttachment(
             size += chunk.length;
             if (size > maxBytes) {
               response.destroy(
-                new Error("Attachment exceeds field size limit."),
+                new AttachmentDownloadError("Attachment exceeds field size limit."),
               );
               return;
             }
@@ -150,7 +153,7 @@ export async function downloadAttachment(
           });
           response.on("end", () => {
             try {
-              if (!size) throw new Error("Attachment is empty.");
+              if (!size) throw new AttachmentDownloadError("Attachment is empty.");
               const disposition = response.headers["content-disposition"] ?? "";
               const encoded = /filename\*=UTF-8''([^;]+)/i.exec(
                 disposition,
@@ -182,8 +185,9 @@ export async function downloadAttachment(
   }
   try {
     return await read(attachmentUrl(source), 0);
-  } catch {
-    throw new Error(
+  } catch (error) {
+    if (error instanceof AttachmentDownloadError) throw error;
+    throw new AttachmentDownloadError(
       "Could not download attachment. Use a public direct file URL with an allowed MIME type and size.",
     );
   }
