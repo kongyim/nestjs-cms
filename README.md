@@ -1082,8 +1082,9 @@ This keeps existing versions available while directing users to the new package.
 For subsequent releases, follow the steps below.
 
 Run the following commands in the package you changed: the repository root for
-`@nestjs-cms/core`, `packages/auth` for `@nestjs-cms/auth`, or
-`packages/admin` for `@nestjs-cms/admin`. The packages have
+`@nestjs-cms/core`, `packages/auth` for `@nestjs-cms/auth`,
+`packages/import` for `@nestjs-cms/import`, or `packages/admin` for
+`@nestjs-cms/admin`. The packages have
 independent versions; release only the packages you changed.
 
 ```sh

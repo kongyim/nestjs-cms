@@ -295,3 +295,31 @@ Generate/review a database migration using the same options with
 `createAuthDataSource`; SQL column defaults or a backfill may be needed for existing
 rows. Schema defaults alone do not backfill a database. Extra fields are available
 on resource endpoints, not automatically added to the authentication identity.
+
+## Publishing updates to npm
+
+Run these commands from `packages/auth`:
+
+```sh
+npm ci
+npm run release:check
+npm run version:patch
+npm run release
+```
+
+- `release:check` runs tests, builds the package, and previews its npm contents
+  without publishing.
+- `version:patch` updates `package.json` and `package-lock.json`, without creating
+  a Git commit or tag. Use `version:minor` or `version:major` for larger releases.
+- `release` publishes publicly to npm. The publish lifecycle runs tests and builds
+  the package before uploading it.
+
+For the first publication, you can omit `version:patch` if the current version
+has never been published. Likewise, do not bump again if you already prepared the
+release version. If needed, run `npm login --auth-type=web` first, then use
+`npm whoami` to check the account. Publishing requires permission for the
+`@nestjs-cms` scope. Commit the version and lockfile changes after release.
+
+Publish a compatible core release first (currently `^0.1.3`). For a fresh
+checkout, run `npm ci` and `npm run build` at the repository root before entering
+`packages/auth`; the development dependency installs a built local copy of core.

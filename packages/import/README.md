@@ -179,3 +179,46 @@ with one warning per column in the result's `warnings` array. Rows with an absen
 empty, or whitespace-only `_key` are skipped before validating their cells. A single
 `_key` header is still required. Duplicate known headers, invalid values in known
 fields, and missing references still fail validation.
+
+## Publishing updates to npm
+
+Run these commands from `packages/import`:
+
+```sh
+npm ci
+npm run release:check
+npm run version:patch
+npm run release
+```
+
+- `release:check` runs tests, builds the package, and previews its npm contents
+  without publishing.
+- `version:patch` updates `package.json` and `package-lock.json`, without creating
+  a Git commit or tag. Use `version:minor` or `version:major` for larger releases.
+- `release` publishes publicly to npm. The publish lifecycle runs tests and builds
+  the package before uploading it.
+
+For the first publication, you can omit `version:patch` if the current version
+has never been published. Likewise, do not bump again if you already prepared the
+release version. If needed, run `npm login --auth-type=web` first, then use
+`npm whoami` to check the account. Publishing requires permission for the
+`@nestjs-cms` scope. Commit the version and lockfile changes after release.
+
+Publish compatible core and auth releases before this package. Its current peer
+requirements are core `^0.1.3` and auth `^0.1.0`.
+
+For a fresh library checkout, install and build core, then auth, before running
+`npm ci` in this directory. Development dependencies use local package copies:
+
+```sh
+# From the repository root:
+npm ci
+npm run build
+cd packages/auth
+npm ci
+npm run build
+cd ../import
+```
+
+Then run the four release commands above. Rebuild core/auth and rerun `npm ci`
+here after changing those packages, so the release checks use current copies.

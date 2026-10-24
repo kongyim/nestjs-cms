@@ -1,6 +1,6 @@
 {
   "name": "@nestjs-cms/core",
-  "version": "0.1.3",
+  "version": "0.1.5",
   "description": "Definition-driven NestJS CMS with S3 attachments",
   "engines": {
     "node": ">=22"
