@@ -79,7 +79,7 @@ PostgreSQL uses [STRPOS](https://www.postgresql.org/docs/17/functions-string.htm
 
 ## Attachments
 
-All uploads, downloads, and deletes go through `Browser → Attachment API → S3 / MinIO`. Browsers do not receive S3 URLs, bucket names, or object keys, and do not need access to the storage endpoint. Each attachment path is bound to its resource, record, field, and attachment ID. Access through a different record returns 404.
+All uploads, downloads, and deletes go through `Browser → Attachment API → S3 / RustFS`. Browsers do not receive S3 URLs, bucket names, or object keys, and do not need access to the storage endpoint. Each attachment path is bound to its resource, record, field, and attachment ID. Access through a different record returns 404.
 
 | Method | Path                                            | Behavior                                                                               |
 | ------ | ----------------------------------------------- | -------------------------------------------------------------------------------------- |
@@ -150,7 +150,7 @@ async function downloadAttachment(
 }
 ```
 
-For a same-origin frontend and API, set `CORS_ORIGINS=`. A frontend on another origin requires backend CORS configuration. S3/MinIO does not require browser CORS. Once deletion or replacement commits, new requests for the old attachment return 404. Responses already streaming are not retroactively cancelled.
+For a same-origin frontend and API, set `CORS_ORIGINS=`. A frontend on another origin requires backend CORS configuration. S3/RustFS does not require browser CORS. Once deletion or replacement commits, new requests for the old attachment return 404. Responses already streaming are not retroactively cancelled.
 
 The former `/uploads` and `/:attachmentId/complete` endpoints were removed in favor of a single multipart POST. Existing ready attachments remain downloadable through the new GET route without changing object keys or the database schema. Previously issued presigned URLs expire according to their original lifetime; the application no longer issues new ones.
 

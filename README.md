@@ -100,29 +100,31 @@ docker run --name nestjs-cms-demo-postgres -d \
   -p 127.0.0.1:5432:5432 postgres:17-alpine
 ```
 
-Wait for PostgreSQL to be ready before starting the application. The example above supports plain resource CRUD. **Attachments also require working S3/MinIO storage and an attachment field in the resource definition.**
+Wait for PostgreSQL to be ready before starting the application. The example above supports plain resource CRUD. **Attachments also require working S3/RustFS storage and an attachment field in the resource definition.**
 
 ### 4a. Configure storage for attachments
 
-For local MinIO, add these settings to your application's `.env`:
+For existing MinIO data, follow the [storage migration instructions](docs/operations.md#migrating-existing-minio-storage) before switching services.
+
+For local RustFS, add these settings to your application's `.env`:
 
 ```dotenv
 S3_REGION=us-east-1
 S3_BUCKET=cms-attachments
 S3_ENDPOINT=http://127.0.0.1:9000
 S3_FORCE_PATH_STYLE=true
-S3_ACCESS_KEY_ID=minioadmin
-S3_SECRET_ACCESS_KEY=minioadmin123
+S3_ACCESS_KEY_ID=rustfsadmin
+S3_SECRET_ACCESS_KEY=rustfsadmin123
 ATTACHMENT_MAX_BYTES=20971520
 ```
 
 These credentials match this library's development Compose setup. From the `nestjs-cms` repository checkout, start storage with:
 
 ```sh
-docker compose up -d --build minio minio-init
+docker compose up -d rustfs
 ```
 
-Wait for MinIO to become healthy and `minio-init` to finish successfully; it creates the private `cms-attachments` bucket. The npm package does not start storage or include the Compose setup. You can also use an existing MinIO server: supply its endpoint and credentials and create the bucket beforehand. The endpoint above assumes the application runs on your host machine.
+Wait for RustFS to become healthy. Open http://localhost:9001, sign in with the configured S3 credentials, and create the private `cms-attachments` bucket once. The npm package does not start storage or include the Compose setup. You can also use an existing RustFS server: supply its endpoint and credentials and create the bucket beforehand. The endpoint above assumes the application runs on your host machine.
 
 For AWS S3 instead, use your bucket's region and name, omit `S3_ENDPOINT`, and set `S3_FORCE_PATH_STYLE=false`. Supply both credential variables, or omit both when using an IAM role. See [AWS S3 configuration](docs/operations.md#aws-s3-configuration) for permissions.
 
@@ -141,7 +143,7 @@ curl -X POST http://localhost:3000/api/pages/RECORD_ID/attachments/cover \
   -F 'file=@/absolute/path/to/cover.png'
 ```
 
-Replace `RECORD_ID` and the file path with your values. If `ADMIN_API_KEY` is configured, include the `X-API-Key` header. Uploads and downloads always pass through the backend attachment API; the browser never connects directly to S3/MinIO.
+Replace `RECORD_ID` and the file path with your values. If `ADMIN_API_KEY` is configured, include the `X-API-Key` header. Uploads and downloads always pass through the backend attachment API; the browser never connects directly to S3/RustFS.
 
 Without working object storage, the application can start and plain resource CRUD still works. Storage is contacted when an attachment operation needs it: uploads fail with HTTP 503 (`Object storage upload unavailable`), and downloads of existing attachments fail with HTTP 503 (`Attachment content unavailable`). There is no local-filesystem fallback. Omitting the S3 settings does not disable attachments; the client uses the default region/bucket and AWS credential chain, which only works if that environment already has access to the matching storage.
 
@@ -180,7 +182,7 @@ Set `CORS_ORIGINS=http://localhost:5173`, for example. Your host application sti
 
 Use this route to create your own repository without cloning or renaming the
 demo. You will build a NestJS API, a Next.js admin at `/admin`, PostgreSQL, and
-MinIO, including administrator login, user and role management, and image uploads.
+RustFS, including administrator login, user and role management, and image uploads.
 Docker runs the database and storage; Node.js runs the two applications.
 
 `@nestjs-cms/auth` supplies users, roles, database-backed sessions, and the
@@ -245,7 +247,7 @@ Run all remaining shell commands from this repository root unless stated otherwi
 npm install
 npm install @nestjs-cms/core@latest @nestjs-cms/auth@latest dotenv --workspace=apps/api
 npm install @nestjs-cms/admin@latest @mui/material-nextjs@9 @emotion/cache --workspace=apps/admin
-mkdir -p docker apps/api/src/resources apps/admin/src/sections
+mkdir -p apps/api/src/resources apps/admin/src/sections
 ```
 
 Keep the single root `package-lock.json` in Git. The resulting layout will be:
@@ -254,8 +256,7 @@ Keep the single root `package-lock.json` in Git. The resulting layout will be:
 my-cms/
   apps/api/src/             NestJS host, authentication, and resources
   apps/admin/src/           Next.js shell and admin configuration
-  docker/                  MinIO Dockerfile and bucket initializer
-  docker-compose.yml       PostgreSQL and MinIO; no pgAdmin
+  docker-compose.yml       PostgreSQL and RustFS; no pgAdmin
   .env                     Local settings, excluded from Git
   package.json
   package-lock.json
@@ -281,7 +282,7 @@ S3_REGION=us-east-1
 S3_BUCKET=cms-attachments
 S3_ENDPOINT=http://127.0.0.1:9000
 S3_FORCE_PATH_STYLE=true
-S3_ACCESS_KEY_ID=minioadmin
+S3_ACCESS_KEY_ID=rustfsadmin
 S3_SECRET_ACCESS_KEY=change-this-local-storage-password
 ATTACHMENT_MAX_BYTES=20971520
 
@@ -320,116 +321,52 @@ services:
       timeout: 3s
       retries: 30
 
-  minio:
-    build:
-      context: ./docker
-      dockerfile: minio.Dockerfile
-    command: server /data --console-address ':9001'
+  rustfs:
+    image: rustfs/rustfs:latest
+    command: /data
     environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:?Set S3_ACCESS_KEY_ID in .env}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:?Set S3_SECRET_ACCESS_KEY in .env}
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY_ID:?Set S3_ACCESS_KEY_ID in .env}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_ACCESS_KEY:?Set S3_SECRET_ACCESS_KEY in .env}
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ADDRESS: ":9001"
+      RUSTFS_CONSOLE_ENABLE: "true"
     ports:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9001:9001"
     volumes:
-      - minio-data:/data
+      - rustfs-data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
       interval: 5s
       timeout: 3s
       retries: 30
-
-  minio-init:
-    build:
-      context: ./docker
-      dockerfile: storage-init.Dockerfile
-    depends_on:
-      minio:
-        condition: service_healthy
-    environment:
-      S3_ENDPOINT: http://minio:9000
-      S3_REGION: ${S3_REGION:-us-east-1}
-      S3_BUCKET: ${S3_BUCKET:?Set S3_BUCKET in .env}
-      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?Set S3_ACCESS_KEY_ID in .env}
-      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?Set S3_SECRET_ACCESS_KEY in .env}
+      start_period: 20s
 
 volumes:
   postgres-data:
-  minio-data:
+  rustfs-data:
 ```
 
-Create `docker/minio.Dockerfile`. This builds a pinned MinIO source release:
-
-```dockerfile
-FROM golang:1.24.8-bookworm AS build
-ENV CGO_ENABLED=0
-RUN go install github.com/minio/minio@RELEASE.2025-10-15T17-29-55Z
-
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
-COPY --from=build /go/bin/minio /usr/local/bin/minio
-EXPOSE 9000 9001
-ENTRYPOINT ["minio"]
-```
-
-Create `docker/storage-init.Dockerfile`:
-
-```dockerfile
-FROM node:22-alpine
-WORKDIR /app
-RUN npm init -y && npm install --save-exact @aws-sdk/client-s3@3.850.0
-COPY init-s3.cjs ./init-s3.cjs
-CMD ["node", "init-s3.cjs"]
-```
-
-Create `docker/init-s3.cjs`:
-
-```js
-const { S3Client, CreateBucketCommand } = require("@aws-sdk/client-s3");
-
-const client = new S3Client({
-  endpoint: process.env.S3_ENDPOINT,
-  region: process.env.S3_REGION,
-  forcePathStyle: true,
-  credentials: {
-    accessKeyId: process.env.S3_ACCESS_KEY_ID,
-    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
-  },
-});
-
-async function main() {
-  const Bucket = process.env.S3_BUCKET;
-  try {
-    await client.send(new CreateBucketCommand({ Bucket }));
-  } catch (error) {
-    if (error.name !== "BucketAlreadyOwnedByYou") throw error;
-  }
-  console.log(`Private bucket ready: ${Bucket}`);
-}
-
-main()
-  .catch((error) => {
-    console.error(error);
-    process.exitCode = 1;
-  })
-  .finally(() => client.destroy());
-```
+RustFS uses its published Docker image, so no storage Dockerfiles or bucket
+initializer scripts are needed. The setup follows the
+[official RustFS Docker instructions](https://github.com/rustfs/docs.rustfs.com/blob/main/content/en/installation/container/docker.md).
 
 Start the services:
 
 ```sh
-docker compose up -d --build
+docker compose up -d
 docker compose ps -a
-docker compose logs minio-init
+docker compose logs rustfs
 ```
 
-The first MinIO build can take several minutes. Continue when PostgreSQL and
-MinIO are healthy and `minio-init` has exited with code 0. The bucket is private;
-uploads and downloads will go through your authenticated API.
+Continue when PostgreSQL and RustFS are healthy. Open http://localhost:9001,
+sign in with your S3 credentials, and create the bucket named by `S3_BUCKET`,
+leaving it private. This is a one-time step for a new storage volume. Uploads and
+downloads go through your authenticated API.
 
 There is no pgAdmin service. You can inspect the database using
 `docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'`.
-The MinIO console is at `http://localhost:9001`; sign in with your S3 credentials.
+The RustFS console is at `http://localhost:9001`; sign in with your S3 credentials.
 
 ### 4. Configure the NestJS host and a resource
 
@@ -705,7 +642,7 @@ requests return 401. Browser requests, including images, go through
 
 If login fails, check the credentials and API logs; after ten login attempts in
 one minute, wait a minute before retrying. If uploads return 503, check
-`docker compose logs minio-init` and the S3 values in `.env`. If the database port
+`docker compose logs rustfs` and the S3 values in `.env`. If the database port
 is occupied, change `DB_PORT` and recreate the Compose services. If you change
 `PORT`, update the Next.js rewrite destination too.
 
@@ -747,7 +684,7 @@ does not change the credentials already initialized in a PostgreSQL volume.
 
 This walkthrough uses `kongyim/nestjs-cms-demo` as a starting template for your own
 repository. It gives you a NestJS API, a Next.js admin with a dashboard, pages,
-categories, users and roles, plus PostgreSQL and MinIO for local development.
+categories, users and roles, plus PostgreSQL and RustFS for local development.
 All package installation commands use the latest releases from npm.
 
 The two packages have different responsibilities: `@nestjs-cms/core` supplies
@@ -786,7 +723,6 @@ my-cms/
       src/sections/      Resource forms and dashboard registration
       src/components/    Custom dashboard component
       next.config.ts     Admin base path and same-origin API proxy
-  docker/                MinIO build and private-bucket initialization
   docker-compose.yml
   package.json           npm workspaces and commands for both apps
   .env                   Create this in step 3; do not commit it
@@ -838,7 +774,7 @@ S3_REGION=us-east-1
 S3_BUCKET=cms-attachments
 S3_ENDPOINT=http://127.0.0.1:9000
 S3_FORCE_PATH_STYLE=true
-S3_ACCESS_KEY_ID=minioadmin
+S3_ACCESS_KEY_ID=rustfsadmin
 S3_SECRET_ACCESS_KEY=change-this-local-storage-password
 ATTACHMENT_MAX_BYTES=20971520
 
@@ -861,19 +797,18 @@ The API and Next.js configuration load this root `.env`; Docker Compose reads
 it too. `ADMIN_ORIGIN` is the browser origin without `/admin`. Keep browser URLs
 on `localhost` consistently so origin checks and session cookies work together.
 
-### 4. Start PostgreSQL and MinIO
+### 4. Start PostgreSQL and RustFS
 
 From the workspace root:
 
 ```sh
-docker compose up -d --build
+docker compose up -d
 docker compose ps -a
-docker compose logs minio-init
+docker compose logs rustfs
 ```
 
-The first build compiles MinIO and can take several minutes. Wait until
-PostgreSQL and MinIO are healthy and `minio-init` exits with code 0. The initializer
-creates the private bucket configured by `S3_BUCKET`.
+Wait until PostgreSQL and RustFS are healthy. Open http://localhost:9001 and
+create the private bucket configured by `S3_BUCKET` on first setup.
 
 The API runs on your host and connects to `127.0.0.1:5432` and
 `http://127.0.0.1:9000`. If port 5432 is occupied, choose another `DB_PORT` in
@@ -909,12 +844,12 @@ Try the complete workflow:
 4. Create an Editor role with `pages:read` and `pages:write`, then create a user
    with that role and a password. Sign in as that user to check restricted access.
 
-| Service       | Local URL                     | Login                                                 |
-| ------------- | ----------------------------- | ----------------------------------------------------- |
-| Admin portal  | `http://localhost:3001/admin` | CMS user email and password                           |
-| NestJS API    | `http://localhost:3000/api`   | Session-protected; use the admin proxy in the browser |
-| MinIO console | `http://localhost:9001`       | `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY`           |
-| pgAdmin       | `http://localhost:8080`       | `PGADMIN_DEFAULT_EMAIL` / `PGADMIN_DEFAULT_PASSWORD`  |
+| Service        | Local URL                     | Login                                                 |
+| -------------- | ----------------------------- | ----------------------------------------------------- |
+| Admin portal   | `http://localhost:3001/admin` | CMS user email and password                           |
+| NestJS API     | `http://localhost:3000/api`   | Session-protected; use the admin proxy in the browser |
+| RustFS console | `http://localhost:9001`       | `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY`           |
+| pgAdmin        | `http://localhost:8080`       | `PGADMIN_DEFAULT_EMAIL` / `PGADMIN_DEFAULT_PASSWORD`  |
 
 In pgAdmin, open the preconfigured **CMS PostgreSQL** connection and enter
 `DB_PASSWORD`. Its internal database host is `postgres`, not `localhost`.
@@ -999,7 +934,7 @@ in `.env` does not update a PostgreSQL user already stored in a volume.
 | API cannot connect to PostgreSQL            | Check `docker compose ps`, `DB_PORT`, and root `.env` credentials.                                          |
 | Login fails on a fresh setup                | Check API startup logs, bootstrap password length, and whether the users table already contains an account. |
 | Login works but requests fail or return 403 | Use `http://localhost:3001/admin`, check `ADMIN_ORIGIN`, and verify the user's role permissions.            |
-| Attachments return 503                      | Check MinIO health, `minio-init` logs, and the API's S3 endpoint, credentials, and bucket.                  |
+| Attachments return 503                      | Check RustFS health, RustFS logs and bucket existence, and the API's S3 endpoint, credentials, and bucket.  |
 | A new resource or section is missing        | Restart the API for resource discovery; import the frontend section and add it to `sections`.               |
 
 ## Migrating from `nestjs-cms`
@@ -1146,13 +1081,14 @@ The repository also contains a demo application with `categories` and `articles`
 ```sh
 npm ci
 cp .env.example .env
-docker compose up -d --build
-# Wait for postgres/minio to be healthy and minio-init to exit with code 0.
+docker compose up -d
+# Wait for postgres/rustfs to be healthy.
+# Create the private S3_BUCKET through http://localhost:9001 on first setup.
 npm run seed
 npm run dev
 ```
 
-The first MinIO build compiles a pinned source release and takes longer than subsequent starts. The demo API runs at `http://localhost:3000/api`, and the MinIO console at `http://localhost:9001`.
+RustFS uses a published image; no source build is required. The demo API runs at `http://localhost:3000/api`, and the RustFS console at `http://localhost:9001`.
 
 ```sh
 npm run format
@@ -1165,7 +1101,7 @@ docker compose --profile mysql up -d mysql
 DB_TYPE=mysql DB_PORT=3307 npm run test:integration
 ```
 
-Integration tests use the dedicated `cms_test` database and real MinIO services. The repository's VS Code settings enable formatting on save when the recommended Prettier extension is installed. These editor settings are not installed into consuming applications.
+Integration tests use the dedicated `cms_test` database and real RustFS services. The repository's VS Code settings enable formatting on save when the recommended Prettier extension is installed. These editor settings are not installed into consuming applications.
 
 ## Scope
 

@@ -17,25 +17,45 @@ Runtime settings are loaded from `.env` and validated with Zod. Process environm
 | DB_USERNAME / DB_PASSWORD / DB_DATABASE | Database credentials and name                                                                            |
 | DB_SYNCHRONIZE                          | Development only; enabling it in production prevents startup                                             |
 | S3_REGION / S3_BUCKET                   | Region and existing private bucket                                                                       |
-| S3_ENDPOINT                             | MinIO or S3-compatible endpoint; omit for AWS S3                                                         |
-| S3_FORCE_PATH_STYLE                     | Use true for MinIO; typically false for AWS S3                                                           |
+| S3_ENDPOINT                             | RustFS or S3-compatible endpoint; omit for AWS S3                                                        |
+| S3_FORCE_PATH_STYLE                     | Use true for RustFS; typically false for AWS S3                                                          |
 | S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY | Provide both, or omit both to use the AWS credential chain/IAM role                                      |
 | ATTACHMENT_MAX_BYTES                    | Defaults to 20 MiB, with a configuration maximum of 1 GiB; field maxBytes can lower the limit            |
 
-When the API runs on the host, `.env.example` uses `http://127.0.0.1:9000`. In the Compose network, use `S3_ENDPOINT=http://minio:9000`. Only the backend needs access to that endpoint. The browser never connects directly to S3/MinIO. `S3_PUBLIC_ENDPOINT` and `S3_URL_TTL_SECONDS` have been removed.
+When the API runs on the host, `.env.example` uses `http://127.0.0.1:9000`. In the Compose network, use `S3_ENDPOINT=http://rustfs:9000`. Only the backend needs access to that endpoint. The browser never connects directly to S3/RustFS. `S3_PUBLIC_ENDPOINT` and `S3_URL_TTL_SECONDS` have been removed.
 
-For a same-origin frontend, use `CORS_ORIGINS=`. If the variable is omitted entirely, the code defaults to `http://localhost:5173`. For a separate frontend origin, list that origin explicitly and call `configureCmsApp(app)` during the host application bootstrap, or configure CORS yourself. Since storage traffic passes through the backend, **S3 bucket/MinIO browser CORS is not required**.
+For a same-origin frontend, use `CORS_ORIGINS=`. If the variable is omitted entirely, the code defaults to `http://localhost:5173`. For a separate frontend origin, list that origin explicitly and call `configureCmsApp(app)` during the host application bootstrap, or configure CORS yourself. Since storage traffic passes through the backend, **S3 bucket/RustFS browser CORS is not required**.
 
 ## Local services
 
 ```sh
-docker compose up -d --build
+docker compose up -d
 docker compose ps -a
 ```
 
-Wait for PostgreSQL and MinIO to become healthy and for `minio-init` to exit with code 0. The initializer creates a private bucket and a lifecycle rule for legacy staging objects.
+Wait for PostgreSQL and RustFS to become healthy. RustFS runs from the published
+`rustfs/rustfs:latest` image, with its S3 API on port 9000 and console on port 9001.
+Open http://localhost:9001, sign in with the `S3_ACCESS_KEY_ID` and
+`S3_SECRET_ACCESS_KEY` configured in `.env`, and create the private bucket named by
+`S3_BUCKET` once for each fresh storage volume. No automatic initializer runs.
+The image tag follows upstream updates when pulled; pin a tested tag or digest
+when you need reproducible deployments. This Compose setup is for local development.
+See the [official RustFS Docker instructions](https://github.com/rustfs/docs.rustfs.com/blob/main/content/en/installation/container/docker.md).
 
-The MinIO image is built from a pinned official source release because the public images used during initial setup could no longer be pulled. The first build downloads and compiles Go dependencies. The source-build approach follows the [official release instructions](https://github.com/minio/minio/releases/tag/RELEASE.2025-10-15T17-29-55Z). This Compose setup is for local development, not a production storage deployment.
+### Migrating existing MinIO storage
+
+RustFS uses a new `rustfs-data` volume. Keep the old `minio-data` volume until the
+migration is verified; do not mount MinIO's data directory into RustFS. Copy objects
+through the S3 APIs, preserving bucket names and object keys so existing attachment
+records still resolve. Run the two storage servers on separate ports during the
+copy, verify attachment downloads, and then switch `S3_ENDPOINT`.
+
+Both Compose configurations use host ports 9000/9001. Stop the old MinIO container
+before starting RustFS on those ports. For a fresh development setup with no files
+to migrate, `docker compose up -d --remove-orphans` removes obsolete containers
+while retaining their named volumes. Do not use `down -v` to migrate storage: it
+also deletes the database and current storage volumes. Changing Compose does not
+copy attachments automatically.
 
 ## PostgreSQL and MySQL
 
@@ -112,7 +132,7 @@ npm start
 
 ## Attachment lifecycle
 
-All traffic follows `Browser → Attachment API → S3 / MinIO`. The browser sends a multipart `file` POST and receives metadata when it succeeds. There is no initiate/complete exchange. Download GET streams bytes through the API without a storage URL or redirect. Delete detaches metadata immediately; cleanup removes the stored object.
+All traffic follows `Browser → Attachment API → S3 / RustFS`. The browser sends a multipart `file` POST and receives metadata when it succeeds. There is no initiate/complete exchange. Download GET streams bytes through the API without a storage URL or redirect. Delete detaches metadata immediately; cleanup removes the stored object.
 
 1. Nest's FileInterceptor receives one file in memory, subject to the global limit, which defaults to 20 MiB. It does not write to the local filesystem.
 2. The service validates the field, MIME type, actual size, field limit, and parent record, then persists pending metadata.
@@ -140,7 +160,7 @@ node dist/scripts/cleanup.js
 
 Run cleanup through a scheduler or cron, for example every 15 minutes. This repository does not install a schedule automatically. Cleanup processes rows whose `expiresAt` is at least one hour old, protecting active uploads. Pending/deleted objects are removed before their metadata rows. Failed rows remain for retry, and the CLI exits with code 1 if any operation fails. For ready attachments, only legacy staging objects are removed, never the final object.
 
-MinIO initialization retains a one-day expiration rule for `staging/` to handle objects left by the former direct-upload flow. New uploads do not use staging. Do not apply blanket expiration to `attachments/`. Versioned buckets need a separate noncurrent-version expiration policy because DeleteObject creates a delete marker.
+There is no automatic lifecycle configuration. If migrating legacy `staging/` objects, configure an expiration policy explicitly after verifying support in your storage release. New uploads do not use staging. Do not apply blanket expiration to `attachments/`. Versioned buckets need a separate noncurrent-version expiration policy because DeleteObject creates a delete marker.
 
 The current cleanup CLI scans eligible metadata, including ready rows. Larger deployments can replace this with a cursor-based batch worker. It does not scan arbitrary bucket objects that have no metadata record; do not manually remove metadata rows.
 
@@ -163,4 +183,4 @@ MIME validation uses the multipart Content-Type. Magic-byte detection, virus sca
 - [NestJS file upload and streaming](https://docs.nestjs.com/techniques/file-upload)
 - [TypeORM EntitySchema](https://typeorm.io/docs/entity/separating-entity-definition/)
 - [TypeORM transactions](https://orkhan.gitbook.io/typeorm/docs/transactions)
-- [MinIO pinned release and source-build instructions](https://github.com/minio/minio/releases/tag/RELEASE.2025-10-15T17-29-55Z)
+- [RustFS Docker setup](https://github.com/rustfs/docs.rustfs.com/blob/main/content/en/installation/container/docker.md)

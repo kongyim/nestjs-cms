@@ -33,30 +33,25 @@ services:
       interval: 5s
       timeout: 5s
       retries: 40
-  minio:
-    build:
-      context: .
-      dockerfile: docker/minio.Dockerfile
-    image: nestjs-cms-minio:2025-10-15
-    command: server /data --console-address ':9001'
+  rustfs:
+    image: rustfs/rustfs:latest
+    command: /data
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin123
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY_ID:-rustfsadmin}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_ACCESS_KEY:-rustfsadmin123}
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ADDRESS: ":9001"
+      RUSTFS_CONSOLE_ENABLE: "true"
     ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
-    volumes: ["minio-data:/data"]
+    volumes: ["rustfs-data:/data"]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 3s
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 5s
       timeout: 3s
       retries: 30
-  minio-init:
-    build:
-      context: .
-      dockerfile: docker/storage-init.Dockerfile
-    depends_on:
-      minio: { condition: service_healthy }
+      start_period: 20s
 
 volumes:
   postgres-data:
   mysql-data:
-  minio-data:
+  rustfs-data:
