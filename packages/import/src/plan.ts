@@ -83,6 +83,7 @@ export function planImport(
   registry: ResourceRegistry,
   spreadsheetId: string,
   maxRows = 10000,
+  onWarning: (message: string) => void = console.warn,
 ): ImportRow[] {
   const rows: ImportRow[] = [];
   const ids = new Set<string>();
@@ -93,8 +94,16 @@ export function planImport(
     if (headers.filter((h) => h === "_key").length !== 1)
       throw new Error(`${resource}: exactly one _key column is required.`);
     const fields = new Set<string>();
-    const columns = headers.map((header) => {
-      if (!header) return null;
+    const warnedColumns = new Set<number>();
+    const ignoreColumn = (index: number, header?: string) => {
+      if (!warnedColumns.has(index)) {
+        warnedColumns.add(index);
+        onWarning(`${resource} column ${index + 1}${header ? ` (${header})` : ""}: undefined header; column ignored.`);
+      }
+      return null;
+    };
+    const columns = headers.map((header, index) => {
+      if (!header) return ignoreColumn(index);
       if (header === "_key") return { field: "_key" };
       const attachment = definition.attachments?.find(
         (item) => item.field === header,
@@ -110,6 +119,8 @@ export function planImport(
       let target = explicitTarget;
       const path = field.split(".");
       const root = path[0];
+      if (!Object.hasOwn(definition.columns, root) || !Object.hasOwn(definition.schema.shape, root))
+        return ignoreColumn(index, header);
       if (
         parts.length > 2 ||
         !Object.hasOwn(definition.columns, root) ||
@@ -127,12 +138,11 @@ export function planImport(
         )
       )
         throw new Error(`${resource}: unknown or duplicate column ${header}.`);
-      fields.add(field);
       let schema: z.ZodType;
       try {
         schema = fieldSchema(definition.schema, path);
       } catch {
-        throw new Error(`${resource}: unknown nested column ${header}.`);
+        return ignoreColumn(index, header);
       }
       if (
         path.length > 1 &&
@@ -141,6 +151,7 @@ export function planImport(
         )
       )
         throw new Error(`${resource}: dotted columns require a JSON field.`);
+      fields.add(field);
       const foreignKeys = (definition.foreignKeys ?? []).filter(
         (fk) => fk.columnNames.length === 1 &&
           fk.columnNames[0] === field &&
@@ -163,6 +174,7 @@ export function planImport(
       const cells = values[index];
       if (cells.every(empty)) continue;
       const rawKey = cells[headers.indexOf("_key")];
+      if (rawKey == null || (typeof rawKey === "string" && !rawKey.trim())) continue;
       if (typeof rawKey !== "string" && typeof rawKey !== "number")
         throw new Error(`${resource} row ${index + 1}: _key is required.`);
       const key = String(rawKey).trim();
@@ -186,10 +198,10 @@ export function planImport(
         const value = cells[column];
         if (empty(value)) continue;
         const header = columns[column];
-        if (!header)
-          throw new Error(
-            `${resource} row ${index + 1}: value under an empty/missing header.`,
-          );
+        if (!header) {
+          ignoreColumn(column, headers[column]);
+          continue;
+        }
         if (header.field === "_key") continue;
         try {
           if (header.attachment) {

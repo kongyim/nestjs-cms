@@ -173,3 +173,9 @@ in the same database transaction as the records. Failed imports leave pending fi
 for the regular storage cleanup job; existing records and ready attachments remain
 unchanged. Object storage must be configured just as it is for API uploads. This
 feature requires core and import packages built with attachment import support.
+
+Undefined columns (including blank headers and unknown nested fields) are ignored
+with one warning per column in the result's `warnings` array. Rows with an absent,
+empty, or whitespace-only `_key` are skipped before validating their cells. A single
+`_key` header is still required. Duplicate known headers, invalid values in known
+fields, and missing references still fail validation.

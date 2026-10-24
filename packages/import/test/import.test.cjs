@@ -82,10 +82,6 @@ test("rejects missing keys, duplicate keys/headers, invalid references and malfo
       ["a", "A", "B"],
     ],
     [
-      ["_key", "id"],
-      ["a", "forbidden"],
-    ],
-    [
       ["_key", "title@categories"],
       ["a", "news"],
     ],
@@ -96,10 +92,6 @@ test("rejects missing keys, duplicate keys/headers, invalid references and malfo
     [
       ["_key", "tags"],
       ["a", "[invalid-json"],
-    ],
-    [
-      ["_key", ""],
-      ["a", "hidden"],
     ],
   ])
     assert.throws(() => planImport({ pages: values }, registry, "sheet"));
@@ -369,14 +361,12 @@ test("dotted translations and comma-separated string arrays use the existing sch
     /invalid cell/,
   );
 });
-test("nested header conflicts, unknown paths, and unsafe keys are rejected", () => {
+test("nested header conflicts and unsafe keys are rejected", () => {
   for (const headers of [
     ["translations", "translations.en"],
     ["translations.en", "translations.en"],
-    ["translations.unknown"],
     ["translations.__proto__.polluted"],
     ["translations.constructor.prototype"],
-    ["title.en"],
   ])
     assert.throws(() =>
       planImport(
@@ -476,9 +466,6 @@ test("attachment columns infer cardinality from resources and reject invalid hea
     },
   ]);
   for (const [header, value] of [
-    ["cover/files", "https://example.com/a.png"],
-    ["documents/file", "https://example.com/a.pdf"],
-    ["unknown/file", "https://example.com/a.png"],
     ["cover", "https://example.com/a.png,https://example.com/b.png"],
     ["cover", "file:///etc/passwd"],
     ["cover", "http://127.0.0.1/a"],
@@ -631,4 +618,33 @@ test("inferred foreign keys import in dependency order and reject missing target
   inferred.pages[1][2] = "missing";
   await assert.rejects(importer.run(), /missing reference categories.missing/);
   assert.equal([...db.stored.pages.values()][0].categoryId, [...db.stored.categories.keys()][0]);
+});
+
+
+test("undefined columns warn once and blank-key rows are skipped before value validation", async () => {
+  const values = [
+    ["_key", "title", "notes", "", "translations.unknown"],
+    ["  ", "", "ignored", "", ""],
+    [null, "", "ignored"],
+    [undefined, "", "ignored"],
+    ["a", "A", "private note", "extra", "unknown", "beyond headers"],
+    ["b", "B", "second note", "extra", "unknown", "beyond headers"],
+    [0, "Zero"],
+  ];
+  const warnings = [];
+  const planned = planImport({ pages: values }, translatedRegistry, "sheet", 3, warning => warnings.push(warning));
+  assert.deepEqual(planned.map(row => row.key), ["a", "b", "0"]);
+  assert.deepEqual(planned.map(row => row.row), [5, 6, 7]);
+  assert.deepEqual(planned[0].data, { title: "A" });
+  assert.equal(warnings.length, 4);
+  assert.ok(warnings.every(warning => !warning.includes('private note')));
+  const db = memoryDb();
+  const importer = new DatabaseImporter(db, translatedRegistry, { spreadsheetId: "sheet", keyFile: "key.json" }, { read: async () => ({ pages: values }) });
+  const preview = await importer.run({ dryRun: true });
+  assert.equal(preview.total, 3);
+  assert.deepEqual(preview.warnings, warnings);
+  assert.equal(db.stored.pages.size, 0);
+  const result = await importer.run();
+  assert.equal(result.resources.pages.created, 3);
+  assert.equal(result.warnings.length, 4);
 });

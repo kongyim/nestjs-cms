@@ -18,6 +18,7 @@ export interface ImportResult {
   total: number;
   resources: Record<string, { created: number; updated: number }>;
   skippedSheets: string[];
+  warnings: string[];
 }
 
 export class DatabaseImporter {
@@ -59,15 +60,18 @@ export class DatabaseImporter {
         if (settings.canWrite && !settings.canWrite(name))
           throw new ForbiddenException(`No write permission for ${name}.`);
       }
+      const warnings: string[] = [];
       const rows = orderRows(
         planImport(
           selected,
           this.registry,
           this.options.spreadsheetId,
           this.options.maxRows,
+          (warning) => warnings.push(warning),
         ),
       );
       const result: ImportResult = {
+        warnings,
         dryRun: settings.dryRun ?? false,
         total: rows.length,
         resources: {},
