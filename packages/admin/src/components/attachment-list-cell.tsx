@@ -46,7 +46,7 @@ export default function AttachmentListCell({
   field: string;
 }) {
   const { config } = useAdmin();
-  const value = (record.attachments as Attachments | undefined)?.[field];
+  const value = record[field] as Attachments[string] | undefined;
   const files = Array.isArray(value) ? value : value ? [value] : [];
   if (!files.length) return <>—</>;
   return (

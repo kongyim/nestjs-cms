@@ -118,7 +118,7 @@ it("creates records with defaults, validates payloads and maps unique conflicts"
     .expect(201);
   articleId = created.body.id;
   expect(created.body.body).toBe("");
-  expect(created.body.attachments.cover).toBeNull();
+  expect(created.body.cover).toBeNull();
   await api()
     .post("/api/articles")
     .set(auth)
@@ -301,7 +301,7 @@ it("uploads and streams bytes only through the authenticated attachment API", as
     .get(`/api/articles/${articleId}`)
     .set(auth)
     .expect(200);
-  expect(record.body.attachments.cover.id).toBe(coverId);
+  expect(record.body.cover.id).toBe(coverId);
   const path = `/api/articles/${articleId}/attachments/cover/${coverId}`;
   await api().get(path).expect(401);
   const downloaded = await api().get(path).set(auth).expect(200);
@@ -400,7 +400,7 @@ it("keeps old attachments when storage upload fails and retains pending cleanup 
     .get(`/api/articles/${articleId}`)
     .set(auth)
     .expect(200);
-  expect(record.body.attachments.cover.id).toBe(coverId);
+  expect(record.body.cover.id).toBe(coverId);
   expect(
     await db
       .getRepository(AttachmentEntity)
@@ -429,7 +429,7 @@ it("serializes single replacements and supports multiple attachments", async () 
     .get(`/api/articles/${articleId}`)
     .set(auth)
     .expect(200);
-  expect(record.body.attachments.files).toHaveLength(2);
+  expect(record.body.files).toHaveLength(2);
   await api()
     .delete(`/api/articles/${articleId}/attachments/files/${f1.id}`)
     .set(auth)

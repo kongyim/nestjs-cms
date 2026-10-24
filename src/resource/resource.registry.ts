@@ -40,7 +40,11 @@ export class ResourceRegistry {
         new Set(fields.map((f) => f.field)).size !== fields.length ||
         fields.some(
           (f) =>
-            !/^[a-zA-Z][a-zA-Z0-9_]*$/.test(f.field) || !f.mimeTypes.length,
+            !/^[a-zA-Z][a-zA-Z0-9_]*$/.test(f.field) ||
+            !f.mimeTypes.length ||
+            reserved.includes(f.field) ||
+            Object.hasOwn(def.columns, f.field) ||
+            Object.hasOwn(def.schema.shape, f.field),
         )
       )
         throw new Error("Invalid attachment definition");

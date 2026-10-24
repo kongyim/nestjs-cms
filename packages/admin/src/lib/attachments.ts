@@ -22,24 +22,24 @@ export async function saveAttachments(
 ): Promise<ResourceRecord> {
   for (const change of changes) {
     const path = `/${resource}/${encodeURIComponent(record.id)}/attachments/${encodeURIComponent(change.field)}`;
-    const attachments = { ...(record.attachments as Attachments | undefined) };
-    const current = attachments[change.field];
+    const current = record[change.field] as Attachments[string] | undefined;
+    let value: Attachments[string];
     if (change.kind === 'upload') {
       const body = new FormData();
       body.append('file', change.file);
       const uploaded = await api<Attachment>(path, { method: 'POST', body });
-      attachments[change.field] = change.multiple
+      value = change.multiple
         ? [...(Array.isArray(current) ? current : []), uploaded]
         : uploaded;
     } else {
       await api(`${path}/${encodeURIComponent(change.id)}`, {
         method: 'DELETE',
       });
-      attachments[change.field] = Array.isArray(current)
+      value = Array.isArray(current)
         ? current.filter((file) => file.id !== change.id)
         : null;
     }
-    record = { ...record, attachments };
+    record = { ...record, [change.field]: value };
     onSaved(change, record);
   }
   return record;

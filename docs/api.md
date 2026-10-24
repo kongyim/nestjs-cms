@@ -25,7 +25,8 @@ Create/get/update return the record itself:
   "categoryId": null,
   "createdAt": "2026-10-21T10:00:00.000Z",
   "updatedAt": "2026-10-21T10:00:00.000Z",
-  "attachments": { "cover": null, "files": [] }
+  "cover": null,
+  "files": []
 }
 ```
 
@@ -164,3 +165,5 @@ The former `/uploads` and `/:attachmentId/complete` endpoints were removed in fa
 - 503: S3 upload/download unavailable, or metadata points to missing object content.
 
 Zod errors return `{ "message": "Validation failed", "issues": [...] }`. Other HTTP errors typically return `{ "statusCode": 400, "message": "...", "error": "Bad Request" }`. Clients should use the HTTP status to determine failure.
+
+Attachment metadata appears directly on list, detail, create, and update records: `cover` is an object or `null`, and `files` is an array. The former `attachments` response wrapper is removed; clients must read `record[field]`. Storage and attachment operation URLs are unchanged.

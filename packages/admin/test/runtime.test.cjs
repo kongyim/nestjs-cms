@@ -116,7 +116,7 @@ test('deferred attachments acknowledge successes and retry remaining requests', 
   let pending = [removal, upload];
   let record = {
     id: 'page',
-    attachments: { documents: [{ id: 'old', name: 'old.txt' }] },
+    documents: [{ id: 'old', name: 'old.txt' }],
   };
   const calls = [];
   let fail = true;
@@ -138,7 +138,7 @@ test('deferred attachments acknowledge successes and retry remaining requests', 
   await saveAttachments(api, 'pages', record, pending, acknowledge);
   assert.deepEqual(calls, ['DELETE', 'POST', 'POST']);
   assert.equal(pending.length, 0);
-  assert.equal(record.attachments.documents[0].id, 'new');
+  assert.equal(record.documents[0].id, 'new');
 });
 
 test('generic renderer preserves field order, nested defaults, and custom controls', () => {
@@ -393,7 +393,7 @@ test('attachment list cells render previews, filenames, empty states, and config
         React.createElement(Cell, {
           resource: 'pages',
           field: 'cover',
-          record: { id: 'page/id', attachments: { cover: value } },
+          record: { id: 'page/id', cover: value },
         }),
       ),
     );

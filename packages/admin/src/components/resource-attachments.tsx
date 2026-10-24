@@ -95,8 +95,7 @@ export default function ResourceAttachments({
   const input = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState('');
-  const attachments = record?.attachments as Attachments | undefined;
-  const value = attachments?.[field.field];
+  const value = record?.[field.field] as Attachments[string] | undefined;
   const files = Array.isArray(value) ? value : value ? [value] : [];
   const path = `/${resource}/${encodeURIComponent(record?.id ?? '')}/attachments/${encodeURIComponent(field.field)}`;
   const uploads = changes.filter(

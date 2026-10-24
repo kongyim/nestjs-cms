@@ -51,7 +51,7 @@ Resource names start with a lowercase letter and may contain lowercase letters, 
 
 Normal payload fields should correspond to columns. Use `type: "json"` for nested objects and arrays. For compatibility with both databases, choose shared column types rather than database-specific types such as PostgreSQL `jsonb` or native arrays. UUIDs are stored as `varchar(36)`.
 
-Single attachment fields use `{ field, mimeTypes }`; add `multiple: true` for collections. Do not put attachment fields in the Zod schema or database columns: their metadata is stored separately. Responses expose `attachments[field]` as an object/null or an array. Resource write payloads do not accept attachment metadata, object keys, or bucket names.
+Single attachment fields use `{ field, mimeTypes }`; add `multiple: true` for collections. Do not put attachment fields in the Zod schema or database columns: their metadata is stored separately. Responses expose each attachment field directly on the record (for example, `record.cover` and `record.files`) as an object/null or an array. Attachment field names cannot collide with system fields, schema fields, or database columns. Resource write payloads do not accept attachment metadata, object keys, or bucket names.
 
 Use `foreignKeys` for relationships between resources; see `resources/articles.ts`. Relations are not automatically expanded. The article hook checks `categoryId` before writing, and the database foreign key enforces referential integrity under concurrency. Categories referenced by articles cannot be deleted.
 

@@ -69,7 +69,7 @@ export class ResourceService {
     const def = this.registry.get(name);
     return rows.map((row) => ({
       ...row,
-      attachments: Object.fromEntries(
+      ...Object.fromEntries(
         (def.attachments ?? []).map((f) => {
           const matches = files
             .filter((a) => a.recordId === row.id && a.field === f.field)
