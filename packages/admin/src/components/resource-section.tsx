@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   Button,
   Chip,
+  Checkbox,
   CircularProgress,
   Dialog,
   DialogActions,
@@ -24,6 +25,7 @@ import {
   Typography,
 } from '@mui/material';
 import ResourceFields from './resource-fields';
+import { deleteRecords } from '../lib/delete-records';
 import AttachmentListCell from './attachment-list-cell';
 import { flattenFields } from '../lib/form-layout';
 import { passwordChanges } from '../lib/password-fields';
@@ -92,6 +94,9 @@ export default function ResourceSection({
   const [pageSize, setPageSize] = useState(20);
   const [editorLoading, setEditorLoading] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [checkedIds, setCheckedIds] = useState<string[]>([]);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const deleting = useRef(false);
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [query, setQuery] = useState('{}');
   const [attachmentChanges, setAttachmentChanges] = useState<
@@ -104,6 +109,11 @@ export default function ResourceSection({
   const [busy, setBusy] = useState(false);
   const [lookupError, setLookupError] = useState('');
   const [refresh, setRefresh] = useState(0);
+
+  useEffect(() => {
+    setCheckedIds([]);
+    setBulkDeleteOpen(false);
+  }, [section.key, page, pageSize, query, recordId, canWrite]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -121,7 +131,12 @@ export default function ResourceSection({
         if (controller.signal.aborted) return;
         if (page > Math.max(1, list.meta.totalPages))
           setPage(Math.max(1, list.meta.totalPages));
-        else setResult(list);
+        else {
+          setResult(list);
+          setCheckedIds((ids) =>
+            ids.filter((id) => list.data.some((record) => record.id === id)),
+          );
+        }
       })
       .catch((error) => {
         if (!controller.signal.aborted) {
@@ -328,6 +343,35 @@ export default function ResourceSection({
     }
   }
 
+  async function removeChecked() {
+    if (!canWrite || !checkedIds.length || deleting.current || loading) return;
+    deleting.current = true;
+    setBusy(true);
+    try {
+      const outcome = await deleteRecords(api, section.key, checkedIds);
+      setCheckedIds(outcome.failed.map((failure) => failure.id));
+      setBulkDeleteOpen(false);
+      if (outcome.failed.length) {
+        notify(
+          `${outcome.deleted.length} deleted; ${outcome.failed.length} could not be deleted. ${outcome.failed[0].message}`,
+          'error',
+        );
+      } else {
+        notify(
+          `${outcome.deleted.length} record${outcome.deleted.length === 1 ? '' : 's'} deleted.`,
+          'success',
+        );
+      }
+      setRefresh((value) => value + 1);
+      await onAccessChange();
+    } catch (error) {
+      notify(message(error), 'error');
+    } finally {
+      deleting.current = false;
+      setBusy(false);
+    }
+  }
+
   function search(event: FormEvent) {
     event.preventDefault();
     const conditions = Object.fromEntries(
@@ -472,7 +516,11 @@ export default function ResourceSection({
           </Typography>
         </div>
         {canWrite && (
-          <Button variant="contained" onClick={() => navigate('new')}>
+          <Button
+            disabled={busy}
+            variant="contained"
+            onClick={() => navigate('new')}
+          >
             + New {section.singular}
           </Button>
         )}
@@ -491,6 +539,7 @@ export default function ResourceSection({
               onChange={(event) =>
                 setFilters({ ...filters, [field.field]: event.target.value })
               }
+              disabled={busy}
               className="w-full sm:w-52"
               slotProps={{ htmlInput: { maxLength: 254 } }}
             >
@@ -508,10 +557,11 @@ export default function ResourceSection({
                 : null}
             </TextField>
           ))}
-          <Button type="submit" variant="outlined">
+          <Button type="submit" variant="outlined" disabled={busy}>
             Search
           </Button>
           <Button
+            disabled={busy}
             onClick={() => {
               setFilters({});
               setQuery('{}');
@@ -521,7 +571,7 @@ export default function ResourceSection({
             Clear
           </Button>
           <Button
-            disabled={loading}
+            disabled={loading || busy}
             onClick={() => setRefresh((value) => value + 1)}
             className="sm:ml-auto"
           >
@@ -529,10 +579,59 @@ export default function ResourceSection({
           </Button>
         </form>
         <Divider />
+        {canWrite && checkedIds.length > 0 && (
+          <div
+            className="flex flex-wrap items-center gap-3 p-4"
+            role="region"
+            aria-label="Selected records"
+          >
+            <Typography aria-live="polite">
+              {checkedIds.length} selected
+            </Typography>
+            <Button
+              color="error"
+              variant="outlined"
+              disabled={busy || loading}
+              onClick={() => setBulkDeleteOpen(true)}
+            >
+              Delete selected
+            </Button>
+            <Button disabled={busy} onClick={() => setCheckedIds([])}>
+              Clear selection
+            </Button>
+          </div>
+        )}
         <TableContainer>
           <Table aria-label={`${section.label} records`}>
             <TableHead>
               <TableRow>
+                {canWrite && (
+                  <TableCell padding="checkbox">
+                    <Checkbox
+                      disabled={busy || loading || !result?.data.length}
+                      checked={
+                        !!result?.data.length &&
+                        checkedIds.length === result.data.length
+                      }
+                      indeterminate={
+                        checkedIds.length > 0 &&
+                        checkedIds.length < (result?.data.length ?? 0)
+                      }
+                      onChange={(_, checked) =>
+                        setCheckedIds(
+                          checked
+                            ? (result?.data.map((record) => record.id) ?? [])
+                            : [],
+                        )
+                      }
+                      slotProps={{
+                        input: {
+                          'aria-label': 'Select all records on this page',
+                        },
+                      }}
+                    />
+                  </TableCell>
+                )}
                 {section.listFields.map((field) => (
                   <TableCell key={field.field}>{field.label}</TableCell>
                 ))}
@@ -543,7 +642,7 @@ export default function ResourceSection({
               {loading ? (
                 <TableRow>
                   <TableCell
-                    colSpan={section.listFields.length + 1}
+                    colSpan={section.listFields.length + 1 + (canWrite ? 1 : 0)}
                     align="center"
                     className="h-48"
                   >
@@ -553,7 +652,7 @@ export default function ResourceSection({
               ) : !result?.data.length ? (
                 <TableRow>
                   <TableCell
-                    colSpan={section.listFields.length + 1}
+                    colSpan={section.listFields.length + 1 + (canWrite ? 1 : 0)}
                     align="center"
                     className="h-48"
                   >
@@ -569,9 +668,35 @@ export default function ResourceSection({
                   <TableRow
                     key={record.id}
                     hover
-                    onClick={() => navigate(record.id)}
+                    selected={checkedIds.includes(record.id)}
+                    onClick={() => {
+                      if (!busy) navigate(record.id);
+                    }}
                     className="cursor-pointer"
                   >
+                    {canWrite && (
+                      <TableCell
+                        padding="checkbox"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <Checkbox
+                          disabled={busy || loading}
+                          checked={checkedIds.includes(record.id)}
+                          onChange={(_, checked) =>
+                            setCheckedIds((ids) =>
+                              checked
+                                ? [...ids, record.id]
+                                : ids.filter((id) => id !== record.id),
+                            )
+                          }
+                          slotProps={{
+                            input: {
+                              'aria-label': `Select ${String(record.title ?? record.displayName ?? record.name ?? record.id)}`,
+                            },
+                          }}
+                        />
+                      </TableCell>
+                    )}
                     {section.listFields.map((field) => {
                       if (
                         field.type === 'attachment' ||
@@ -629,6 +754,7 @@ export default function ResourceSection({
                     })}
                     <TableCell align="right">
                       <Button
+                        disabled={busy}
                         component="a"
                         href={`#/${section.key}/${encodeURIComponent(record.id)}`}
                         onClick={(event) => event.stopPropagation()}
@@ -654,9 +780,44 @@ export default function ResourceSection({
             setPageSize(Number(event.target.value));
             setPage(1);
           }}
-          disabled={loading}
+          disabled={loading || busy}
         />
       </Paper>
+      <Dialog
+        open={bulkDeleteOpen && canWrite}
+        onClose={() => {
+          if (!busy) setBulkDeleteOpen(false);
+        }}
+        aria-labelledby="bulk-delete-title"
+        aria-describedby="bulk-delete-description"
+      >
+        <DialogTitle id="bulk-delete-title">
+          Delete {checkedIds.length} selected records?
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText id="bulk-delete-description">
+            This permanently deletes the {checkedIds.length} selected records
+            from {section.label}. This action cannot be undone.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            autoFocus
+            disabled={busy}
+            onClick={() => setBulkDeleteOpen(false)}
+          >
+            Cancel
+          </Button>
+          <Button
+            color="error"
+            variant="contained"
+            disabled={busy || loading || !checkedIds.length}
+            onClick={removeChecked}
+          >
+            {busy ? 'Deleting…' : 'Delete selected records'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </>
   );
 }
