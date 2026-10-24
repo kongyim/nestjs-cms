@@ -7,7 +7,10 @@ import { defineAdmin, type AdminConfig } from './config';
 import AdminTheme from './components/theme-provider';
 import SectionContent from './components/section-content';
 import {
-  Alert,
+  NotificationProvider,
+  useNotifications,
+} from './components/notifications';
+import {
   Avatar,
   Button,
   CircularProgress,
@@ -21,16 +24,21 @@ import {
   Typography,
 } from '@mui/material';
 
-export default function AdminPortal({
-  config: input,
-}: {
-  config: AdminConfig;
-}) {
+export default function AdminPortal({ config }: { config: AdminConfig }) {
+  return (
+    <AdminTheme options={config.theme}>
+      <NotificationProvider>
+        <PortalContent config={config} />
+      </NotificationProvider>
+    </AdminTheme>
+  );
+}
+
+function PortalContent({ config: input }: { config: AdminConfig }) {
   const config = useMemo(() => defineAdmin(input), [input]);
   const [expired, setExpired] = useState(0);
   const [importing, setImporting] = useState(false);
   const importLock = useRef(false);
-  const [importNotice, setImportNotice] = useState('');
   const [contentVersion, setContentVersion] = useState(0);
   const api = useMemo(() => {
     const request =
@@ -76,7 +84,7 @@ export default function AdminPortal({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  const notify = useNotifications();
 
   useEffect(() => {
     let active = true;
@@ -104,12 +112,14 @@ export default function AdminPortal({
   async function login(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
-    setError('');
     try {
       setUser(await auth.login({ email, password }));
       setPassword('');
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'Sign in failed.');
+      notify(
+        error instanceof Error ? error.message : 'Sign in failed.',
+        'error',
+      );
     } finally {
       setBusy(false);
     }
@@ -117,21 +127,18 @@ export default function AdminPortal({
 
   async function logout() {
     setBusy(true);
-    setError('');
     try {
       await auth.logout();
       setUser(null);
     } catch {
-      setError('Could not sign out. Please try again.');
+      notify('Could not sign out. Please try again.', 'error');
     } finally {
       setBusy(false);
     }
   }
 
   const wrap = (content: React.ReactNode) => (
-    <AdminContext.Provider value={runtime}>
-      <AdminTheme options={config.theme}>{content}</AdminTheme>
-    </AdminContext.Provider>
+    <AdminContext.Provider value={runtime}>{content}</AdminContext.Provider>
   );
 
   if (checking)
@@ -175,7 +182,6 @@ export default function AdminPortal({
               onChange={(event) => setPassword(event.target.value)}
               slotProps={{ htmlInput: { maxLength: 128 } }}
             />
-            {error && <Alert severity="error">{error}</Alert>}
             <Button
               variant="contained"
               size="large"
@@ -206,22 +212,22 @@ export default function AdminPortal({
     if (importLock.current || !config.databaseImport) return;
     importLock.current = true;
     setImporting(true);
-    setError('');
-    setImportNotice('');
     try {
       const result = await api<{
         total: number;
         resources: Record<string, { created: number; updated: number }>;
       }>(config.databaseImport.path ?? '/database/import', { method: 'POST' });
       const counts = Object.values(result.resources);
-      setImportNotice(
+      notify(
         `Import complete: ${counts.reduce((sum, value) => sum + value.created, 0)} created, ${counts.reduce((sum, value) => sum + value.updated, 0)} updated.`,
+        'success',
       );
       setContentVersion((value) => value + 1);
       await refreshAccess();
     } catch (cause) {
-      setError(
+      notify(
         cause instanceof Error ? cause.message : 'Database import failed.',
+        'error',
       );
     } finally {
       importLock.current = false;
@@ -319,16 +325,6 @@ export default function AdminPortal({
           </Typography>
         </header>
         <main className="w-full p-5 md:p-8">
-          {error && (
-            <Alert severity="error" className="mb-6">
-              {error}
-            </Alert>
-          )}
-          {importNotice && (
-            <Alert severity="success" className="mb-6" role="status">
-              {importNotice}
-            </Alert>
-          )}
           {section ? (
             <SectionContent
               key={`${user.id}:${section.key}:${contentVersion}`}
@@ -341,12 +337,18 @@ export default function AdminPortal({
               onAccessChange={refreshAccess}
             />
           ) : (
-            <Alert severity="info">
-              Your role does not include access to any sections.
-            </Alert>
+            <NoSectionAccess />
           )}
         </main>
       </div>
     </div>,
   );
+}
+
+function NoSectionAccess() {
+  const notify = useNotifications();
+  useEffect(() => {
+    notify('Your role does not include access to any sections.', 'info');
+  }, [notify]);
+  return null;
 }

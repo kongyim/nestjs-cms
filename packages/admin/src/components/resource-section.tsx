@@ -2,7 +2,6 @@
 
 import { useEffect, useState, type FormEvent } from 'react';
 import {
-  Alert,
   Button,
   Chip,
   CircularProgress,
@@ -82,7 +81,7 @@ export default function ResourceSection({
   canWrite: boolean;
   onAccessChange: () => Promise<void>;
 }) {
-  const { api } = useAdmin();
+  const { api, notify } = useAdmin();
   const attachmentFields = new Set(
     flattenFields(section.formFields)
       .filter((field) => field.type === 'attachment')
@@ -103,15 +102,12 @@ export default function ResourceSection({
   const [options, setOptions] = useState<Record<string, Option[]>>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
   const [lookupError, setLookupError] = useState('');
-  const [notice, setNotice] = useState('');
   const [refresh, setRefresh] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
-    setError('');
     const params = new URLSearchParams({
       page: String(page),
       limit: String(pageSize),
@@ -129,7 +125,7 @@ export default function ResourceSection({
       })
       .catch((error) => {
         if (!controller.signal.aborted) {
-          setError(message(error));
+          notify(message(error), 'error');
           setResult(null);
         }
       })
@@ -137,7 +133,7 @@ export default function ResourceSection({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [api, section, page, pageSize, query, refresh]);
+  }, [api, section, page, pageSize, query, refresh, notify]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -174,24 +170,27 @@ export default function ResourceSection({
       if (!controller.signal.aborted) setOptions(loaded);
     }
     void load().catch((error) => {
-      if (!controller.signal.aborted) setLookupError(message(error));
+      if (!controller.signal.aborted) {
+        setLookupError(message(error));
+        notify(`Could not load field options: ${message(error)}`, 'error', {
+          label: 'Retry',
+          onClick: () => setRefresh((value) => value + 1),
+        });
+      }
     });
     return () => controller.abort();
-  }, [api, section, refresh]);
+  }, [api, section, refresh, notify]);
 
   function select(record: ResourceRecord | null) {
     setSelected(record);
     setAttachmentChanges([]);
     setValues(editorValues(section, record));
-    setError('');
-    setNotice('');
   }
 
   useEffect(() => {
     const controller = new AbortController();
     setSelected(null);
     setAttachmentChanges([]);
-    setError('');
     if (!recordId || recordId === 'new') {
       setValues(editorValues(section));
       setEditorLoading(false);
@@ -208,24 +207,21 @@ export default function ResourceSection({
         }
       })
       .catch((error) => {
-        if (!controller.signal.aborted) setError(message(error));
+        if (!controller.signal.aborted) notify(message(error), 'error');
       })
       .finally(() => {
         if (!controller.signal.aborted) setEditorLoading(false);
       });
     return () => controller.abort();
-  }, [api, section, recordId]);
+  }, [api, section, recordId, notify]);
 
   function navigate(id?: string) {
-    setNotice('');
     window.location.hash = `/${section.key}${id ? `/${encodeURIComponent(id)}` : ''}`;
   }
 
   async function save(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
-    setError('');
-    setNotice('');
     let recordSaved = false;
     try {
       const passwords = passwordChanges(
@@ -293,15 +289,19 @@ export default function ResourceSection({
       select(record);
       if (recordId === 'new')
         window.location.hash = `/${section.key}/${encodeURIComponent(record.id)}`;
-      setNotice(isNew ? `${section.label} record created.` : 'Changes saved.');
+      notify(
+        isNew ? `${section.label} record created.` : 'Changes saved.',
+        'success',
+      );
       if (isNew) setPage(1);
       setRefresh((value) => value + 1);
       await onAccessChange();
     } catch (error) {
-      setError(
+      notify(
         recordSaved
           ? `Record details were saved, but saving did not finish. ${message(error)} Remaining changes are still pending; click Save changes to retry.`
           : message(error),
+        'error',
       );
     } finally {
       setBusy(false);
@@ -311,8 +311,6 @@ export default function ResourceSection({
   async function remove() {
     if (!selected) return;
     setBusy(true);
-    setError('');
-    setNotice('');
     try {
       await api(`/${section.key}/${encodeURIComponent(selected.id)}`, {
         method: 'DELETE',
@@ -320,11 +318,11 @@ export default function ResourceSection({
       select(null);
       setDeleteOpen(false);
       window.location.hash = `/${section.key}`;
-      setNotice('Record deleted.');
+      notify('Record deleted.', 'success');
       setRefresh((value) => value + 1);
       await onAccessChange();
     } catch (error) {
-      setError(message(error));
+      notify(message(error), 'error');
     } finally {
       setBusy(false);
     }
@@ -357,34 +355,6 @@ export default function ResourceSection({
           section.singular,
       )
     : `New ${section.singular}`;
-  const alerts = (
-    <>
-      {error && (
-        <Alert severity="error" className="mb-5">
-          {error}
-        </Alert>
-      )}
-      {lookupError && (
-        <Alert
-          severity="error"
-          className="mb-5"
-          action={
-            <Button onClick={() => setRefresh((value) => value + 1)}>
-              Retry
-            </Button>
-          }
-        >
-          Could not load field options: {lookupError}
-        </Alert>
-      )}
-      {notice && (
-        <Alert severity="success" className="mb-5">
-          {notice}
-        </Alert>
-      )}
-    </>
-  );
-
   if (editing)
     return (
       <>
@@ -401,14 +371,9 @@ export default function ResourceSection({
             {recordId === 'new' ? section.description : recordTitle}
           </Typography>
         </div>
-        {(editorLoading || (recordId !== 'new' && !selected)) && alerts}
         {editorLoading ? (
           <CircularProgress aria-label="Loading record" />
-        ) : recordId !== 'new' && !selected ? (
-          <Alert severity="warning">
-            The record could not be loaded. Return to the list and try again.
-          </Alert>
-        ) : (
+        ) : recordId !== 'new' && !selected ? null : (
           <div className="w-full space-y-6">
             <Paper variant="outlined" className="p-6 md:p-8">
               <Typography variant="h6" component="h2" className="mb-6">
@@ -435,7 +400,6 @@ export default function ResourceSection({
                   onChange={setValues}
                 />
                 <Divider className="my-7" />
-                {alerts}
                 <div className="flex flex-wrap gap-3">
                   {canWrite && (
                     <Button
@@ -513,7 +477,6 @@ export default function ResourceSection({
           </Button>
         )}
       </div>
-      {alerts}
       <Paper variant="outlined" className="overflow-hidden">
         <form
           onSubmit={search}

@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from 'react';
 import {
-  Alert,
   Box,
   Button,
   Chip,
@@ -91,10 +90,9 @@ export default function ResourceAttachments({
   disabled: boolean;
   onChange: (changes: AttachmentChange[]) => void;
 }) {
-  const { config } = useAdmin();
+  const { config, notify } = useAdmin();
   const input = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
-  const [error, setError] = useState('');
   const value = record?.[field.field] as Attachments[string] | undefined;
   const files = Array.isArray(value) ? value : value ? [value] : [];
   const path = `/${resource}/${encodeURIComponent(record?.id ?? '')}/attachments/${encodeURIComponent(field.field)}`;
@@ -116,9 +114,8 @@ export default function ResourceAttachments({
 
   function stage(selected: File[]) {
     if (disabled || !canWrite || !selected.length) return;
-    setError('');
     if (!field.multiple && selected.length > 1) {
-      setError('Choose one file for this field.');
+      notify('Choose one file for this field.', 'error');
       return;
     }
     const invalid = selected.find(
@@ -133,8 +130,9 @@ export default function ResourceAttachments({
         ),
     );
     if (invalid) {
-      setError(
+      notify(
         `“${invalid.name}” is not a supported file type. Choose ${formats}.`,
+        'error',
       );
       return;
     }
@@ -353,7 +351,6 @@ export default function ResourceAttachments({
           />
         </Box>
       )}
-      {error && <Alert severity="error">{error}</Alert>}
       <FormHelperText>
         {field.hint ?? 'Uploads and removals are applied when you save.'}
       </FormHelperText>

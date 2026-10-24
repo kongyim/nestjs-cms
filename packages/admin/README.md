@@ -41,27 +41,27 @@ React 19 and React DOM 19, which this Next.js App Router setup uses.
 Create `src/admin.config.ts`:
 
 ```ts
-"use client";
+'use client';
 
-import { defineAdmin, defineSection } from "@nestjs-cms/admin";
+import { defineAdmin, defineSection } from '@nestjs-cms/admin';
 
 const pages = defineSection({
-  key: "pages",
-  label: "Pages",
-  singular: "page",
-  readPermission: "pages:read",
-  writePermission: "pages:write",
-  defaults: { title: "" },
-  listFields: [{ field: "title", label: "Title" }],
+  key: 'pages',
+  label: 'Pages',
+  singular: 'page',
+  readPermission: 'pages:read',
+  writePermission: 'pages:write',
+  defaults: { title: '' },
+  listFields: [{ field: 'title', label: 'Title' }],
   formFields: [
-    { field: "title", label: "Title", type: "text", required: true },
+    { field: 'title', label: 'Title', type: 'text', required: true },
   ],
 });
 
 export default defineAdmin({
-  title: "My Admin",
-  apiBaseUrl: "/api",
-  defaultSection: "pages",
+  title: 'My Admin',
+  apiBaseUrl: '/api',
+  defaultSection: 'pages',
   sections: [pages],
 });
 ```
@@ -76,10 +76,10 @@ boundary because actions and renderers can contain functions.
 Replace `src/app/page.tsx` with:
 
 ```tsx
-"use client";
+'use client';
 
-import { AdminPortal } from "@nestjs-cms/admin";
-import config from "../admin.config";
+import { AdminPortal } from '@nestjs-cms/admin';
+import config from '../admin.config';
 
 export default function Page() {
   return <AdminPortal config={config} />;
@@ -89,9 +89,9 @@ export default function Page() {
 Replace `src/app/layout.tsx` with:
 
 ```tsx
-import type { ReactNode } from "react";
-import { AppRouterCacheProvider } from "@mui/material-nextjs/v15-appRouter";
-import "@nestjs-cms/admin/styles.css";
+import type { ReactNode } from 'react';
+import { AppRouterCacheProvider } from '@mui/material-nextjs/v15-appRouter';
+import '@nestjs-cms/admin/styles.css';
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
@@ -115,14 +115,14 @@ theme later with `config.theme`.
 Replace `next.config.ts` at the project root with:
 
 ```ts
-import type { NextConfig } from "next";
+import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
   async rewrites() {
     return [
       {
-        source: "/api/:path*",
-        destination: "http://localhost:3000/api/:path*",
+        source: '/api/:path*',
+        destination: 'http://localhost:3000/api/:path*',
       },
     ];
   },
@@ -281,7 +281,7 @@ and recovery steps.
 Use `defineCustomSection` for dashboards, reports, or other React pages:
 
 ```tsx
-import { defineAdmin, defineCustomSection, useAdmin } from "@nestjs-cms/admin";
+import { defineAdmin, defineCustomSection, useAdmin } from '@nestjs-cms/admin';
 
 function Dashboard() {
   const { config, api } = useAdmin();
@@ -290,15 +290,15 @@ function Dashboard() {
 }
 
 const dashboard = defineCustomSection({
-  key: "dashboard",
-  label: "Dashboard",
+  key: 'dashboard',
+  label: 'Dashboard',
   component: Dashboard,
   // readPermission: 'dashboard:read',
 });
 
 export default defineAdmin({
   sections: [dashboard], // May be mixed with existing defineSection() resources.
-  defaultSection: "dashboard",
+  defaultSection: 'dashboard',
 });
 ```
 
@@ -317,14 +317,14 @@ components from a client entry point, rather than passing it across a server bou
 When using `@nestjs-cms/auth`, add its management sections without copying forms:
 
 ```ts
-import { defineAdmin, createAuthSections } from "@nestjs-cms/admin";
+import { defineAdmin, createAuthSections } from '@nestjs-cms/admin';
 
 export default defineAdmin({
-  apiBaseUrl: "/admin/api",
+  apiBaseUrl: '/admin/api',
   sections: [
     ...createAuthSections([
-      { value: "pages:read", label: "View pages" },
-      { value: "pages:write", label: "Edit pages" },
+      { value: 'pages:read', label: 'View pages' },
+      { value: 'pages:write', label: 'Edit pages' },
     ]),
   ],
 });
@@ -343,12 +343,21 @@ Pass an optional second argument to `createAuthSections(permissions, extensions)
 createAuthSections([], {
   users: {
     defaults: { phone: null },
-    formFields: [{ field: 'phone', label: 'Phone', type: 'text', nullable: true }],
+    formFields: [
+      { field: 'phone', label: 'Phone', type: 'text', nullable: true },
+    ],
     listFields: [{ field: 'phone', label: 'Phone' }],
   },
   roles: {
     defaults: { description: null },
-    formFields: [{ field: 'description', label: 'Description', type: 'textarea', nullable: true }],
+    formFields: [
+      {
+        field: 'description',
+        label: 'Description',
+        type: 'textarea',
+        nullable: true,
+      },
+    ],
   },
 });
 ```
@@ -366,3 +375,25 @@ client and is visible to `users:manage`. Configure the authenticated endpoint wi
 `@nestjs-cms/import`. The action reports progress, errors, and counts, then refreshes
 the displayed section. Optional `path` and `permission` affect the client only; server
 permissions cannot be overridden by configuration in the browser.
+
+## Notifications
+
+The portal displays feedback in Material UI snackbars at the bottom-right,
+including sign-in errors, imports, resource saves/deletes, field-option loading,
+and attachment validation. Messages queue rather than overlap. Success and info
+messages dismiss after six seconds; errors and warnings stay until dismissed.
+Clicking elsewhere does not dismiss a notification. Field-option errors retain
+their Retry action.
+
+Custom pages can use the same queue through `useAdmin()`:
+
+```tsx
+const { notify } = useAdmin();
+
+// In an event handler or effect:
+notify('Changes saved.', 'success');
+notify('Could not load the report.', 'error', {
+  label: 'Retry',
+  onClick: reloadReport,
+});
+```
