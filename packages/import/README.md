@@ -34,8 +34,28 @@ permission for every matching selected resource. The body cannot change the shee
 credentials, resource limit, or permission checks. Keep your normal admin origin/proxy
 configuration. Import creates no new authentication mechanism.
 
-For CLI use, create a data source with the same resource definitions, initialize it,
-and invoke `new DatabaseImporter(dataSource, registry, options).run()`.
+## CLI
+
+The package provides a `nestjs-cms-import` executable:
+
+```json
+"database:import": "nestjs-cms-import --config ./src/auth.config.ts --base-dir ../.."
+```
+
+The configuration file must export `authConfig` (a `CmsAuthOptions` object) and load
+any environment files it needs. TypeScript configurations require `ts-node` and
+`typescript` installed in the application; compiled JavaScript configurations also
+work (`--config ./dist/auth.config.js`). Paths are resolved from the working
+directory. `--base-dir` controls relative Google credential paths and defaults to
+the working directory. For an npm workspace script, use paths relative to that
+workspace.
+
+Run `npm run database:import -- --dry-run` to preview or `npm run database:import`
+to import. The CLI disables schema synchronization, does not bootstrap an admin,
+and closes the database connection after importing. Use `--help` for usage.
+
+For programmatic use, invoke
+`new DatabaseImporter(dataSource, registry, options).run()`.
 `run({ dryRun: true })` validates rows and references and predicts create/update counts
 without invoking hooks or writing. It does not predict every SQL constraint or hook
 failure. Disable data-source synchronization if the CLI should only import data.
@@ -62,7 +82,10 @@ Put the target `_key` in the cell. Records are ordered automatically. References
 excluded tabs work only if those keys have already been imported into this database.
 Missing references and circular references fail the import.
 
-- Field headers must match persisted schema fields exactly.
+- Field headers must match persisted schema fields. Dotted headers such as
+  `translations.en`, `translations.tc`, and `translations.sc` address declared
+  nested object fields in JSON columns. Do not mix a parent header and its dotted
+  descendants. Blank dotted cells preserve stored siblings; new rows use defaults.
 - Numbers and booleans are converted based on column types. Use `true` / `false`.
 - JSON fields use JSON text: `["news"]`, `{"en":"Welcome","tc":"歡迎","sc":"欢迎"}`.
 - Use ISO dates (`2026-10-01`) and timestamps (`2026-10-01T09:00:00Z`) as text.
@@ -108,3 +131,10 @@ This shows an action below section navigation for `users:manage`, sends a POST t
 the configured API client, prevents repeated clicks, reports completion/errors, and
 refreshes the active section. `path` and `permission` can customize UI behavior; the
 server's permission rules remain authoritative.
+
+String arrays (including string enums) also accept comma-separated cells: `help, news`
+becomes `["help", "news"]`. Items are trimmed and empty items discarded. JSON arrays
+remain supported, including `[]` to clear a field or `["a,b"]` for a string containing
+a comma. Non-string arrays and object-valued cells still require JSON. Conversion
+does not bypass schema validation: string-enum arrays still enforce their allowed
+values. The demo tags use a free-form nonempty string schema.

@@ -1,3 +1,4 @@
+import { getPath, setPath } from "./cells";
 import { ConflictException, ForbiddenException } from "@nestjs/common";
 import type {
   ResourceRegistry,
@@ -113,11 +114,32 @@ export class DatabaseImporter {
               (await manager
                 .getRepository(row.resource)
                 .findOneBy({ id: row.id })) ?? undefined;
-            let patch = row.data;
+            let patch = { ...row.data };
+            // Only supplied dotted leaves change; blank/missing siblings keep stored values.
+            for (const root of new Set(
+              (row.nestedPaths ?? []).map((path) => path[0]),
+            )) {
+              const base = previous
+                ? previous[root]
+                : def.schema.shape[root].safeParse(undefined).data;
+              const nested =
+                base && typeof base === "object" && !Array.isArray(base)
+                  ? structuredClone(base)
+                  : {};
+              for (const path of row.nestedPaths ?? []) {
+                if (path[0] === root)
+                  setPath(
+                    nested as Record<string, unknown>,
+                    path.slice(1),
+                    getPath(row.data, path),
+                  );
+              }
+              patch[root] = nested;
+            }
             if (previous) {
               const update = (
                 def.updateSchema ?? def.schema.partial().strict()
-              ).safeParse(row.data);
+              ).safeParse(patch);
               if (!update.success)
                 throw new Error(
                   `${row.resource} row ${row.row}: invalid update fields.`,

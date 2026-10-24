@@ -1,3 +1,5 @@
+import { fieldSchema, setPath, stringArray, cellType } from "./cells";
+import type { z } from "@nestjs-cms/core";
 import { createHash } from "node:crypto";
 import type { ResourceRegistry } from "@nestjs-cms/core";
 import type { SheetRows } from "./sheets";
@@ -8,6 +10,7 @@ export interface ImportRow {
   row: number;
   id: string;
   data: Record<string, unknown>;
+  nestedPaths?: string[][];
   references: { field: string; resource: string; key: string; id: string }[];
 }
 
@@ -30,8 +33,15 @@ export function importRecordId(
 }
 const empty = (value: unknown) =>
   value === undefined || value === null || value === "";
-function decode(value: unknown, type: unknown): unknown {
+function decode(value: unknown, type: unknown, schema: z.ZodType): unknown {
   if (value === "null") return null;
+  if (stringArray(schema) && typeof value === "string") {
+    if (value.trim().startsWith("[")) return JSON.parse(value);
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
   if (type === Boolean || type === "boolean" || type === "bool") {
     if (value === true || value === "true" || value === "TRUE") return true;
     if (value === false || value === "false" || value === "FALSE") return false;
@@ -86,14 +96,39 @@ export function planImport(
       if (header === "_key") return { field: "_key" };
       const parts = header.split("@");
       const [field, target] = parts;
+      const path = field.split(".");
+      const root = path[0];
       if (
         parts.length > 2 ||
-        !Object.hasOwn(definition.columns, field) ||
-        !Object.hasOwn(definition.schema.shape, field) ||
-        fields.has(field)
+        !Object.hasOwn(definition.columns, root) ||
+        !Object.hasOwn(definition.schema.shape, root) ||
+        path.some(
+          (key) =>
+            !/^[a-zA-Z][a-zA-Z0-9_]*$/.test(key) ||
+            ["__proto__", "constructor", "prototype"].includes(key),
+        ) ||
+        [...fields].some(
+          (other) =>
+            other === field ||
+            other.startsWith(field + ".") ||
+            field.startsWith(other + "."),
+        )
       )
         throw new Error(`${resource}: unknown or duplicate column ${header}.`);
       fields.add(field);
+      let schema: z.ZodType;
+      try {
+        schema = fieldSchema(definition.schema, path);
+      } catch {
+        throw new Error(`${resource}: unknown nested column ${header}.`);
+      }
+      if (
+        path.length > 1 &&
+        !["json", "jsonb", "simple-json"].includes(
+          String(definition.columns[root].type),
+        )
+      )
+        throw new Error(`${resource}: dotted columns require a JSON field.`);
       if (parts.length === 2) {
         registry.get(target);
         const fk = definition.foreignKeys?.find(
@@ -108,7 +143,7 @@ export function planImport(
             `${resource}: ${header} must match a declared foreign key to id.`,
           );
       }
-      return { field, target };
+      return { field, target, path, schema };
     });
     for (let index = 1; index < values.length; index++) {
       const cells = values[index];
@@ -153,11 +188,21 @@ export function planImport(
             };
             row.references.push(ref);
             row.data[header.field] = ref.id;
-          } else
-            row.data[header.field] = decode(
-              value,
-              definition.columns[header.field].type,
+          } else {
+            const path = header.path!;
+            setPath(
+              row.data,
+              path,
+              decode(
+                value,
+                path.length > 1
+                  ? cellType(header.schema!)
+                  : definition.columns[path[0]].type,
+                header.schema!,
+              ),
             );
+            if (path.length > 1) (row.nestedPaths ??= []).push(path);
+          }
         } catch {
           throw new Error(
             `${resource} row ${index + 1}, ${headers[column]}: invalid cell value.`,

@@ -3,6 +3,7 @@
   "engines": { "node": ">=22" },
   "main": "./dist/index.js", "types": "./dist/index.d.ts",
   "exports": { ".": { "types": "./dist/index.d.ts", "require": "./dist/index.js", "default": "./dist/index.js" } },
+  "bin": { "nestjs-cms-import": "./dist/cli.js" },
   "files": ["dist", "README.md"],
   "scripts": { "build": "tsc -p tsconfig.json", "test": "node --test test/*.test.cjs", "prepack": "npm run build", "release:check": "npm run build && npm test && npm pack --dry-run" },
   "dependencies": { "google-auth-library": "^10.0.0" },

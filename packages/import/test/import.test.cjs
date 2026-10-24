@@ -95,7 +95,7 @@ test("rejects missing keys, duplicate keys/headers, invalid references and malfo
     ],
     [
       ["_key", "tags"],
-      ["a", "not-json"],
+      ["a", "[invalid-json"],
     ],
     [
       ["_key", ""],
@@ -290,4 +290,154 @@ test("update schema transforms and hooks are preserved", async () => {
   await importer.run();
   await importer.run();
   assert.equal([...db.stored.categories.values()][0].name, "NEWS!");
+});
+
+const translated = {
+  name: "pages",
+  schema: z
+    .object({
+      title: z.string(),
+      translations: z
+        .object({ en: z.string(), tc: z.string(), sc: z.string() })
+        .strict()
+        .nullable()
+        .default({ en: "", tc: "", sc: "" }),
+      tags: z
+        .array(z.enum(["news", "help", "company"]))
+        .nullable()
+        .default([]),
+      blocks: z.array(z.object({ heading: z.string() })).default([]),
+    })
+    .strict(),
+  columns: {
+    title: { type: String },
+    translations: { type: "json", nullable: true },
+    tags: { type: "json", nullable: true },
+    blocks: { type: "json" },
+  },
+};
+const translatedRegistry = new ResourceRegistry([translated]);
+test("dotted translations and comma-separated string arrays use the existing schema", () => {
+  const [row] = planImport(
+    {
+      pages: [
+        [
+          "_key",
+          "title",
+          "translations.en",
+          "translations.tc",
+          "translations.sc",
+          "tags",
+        ],
+        ["one", "Page 1", "Page 1", "頁面 1", "页面 1", "help, news, , "],
+      ],
+    },
+    translatedRegistry,
+    "sheet",
+  );
+  assert.deepEqual(row.data.translations, {
+    en: "Page 1",
+    tc: "頁面 1",
+    sc: "页面 1",
+  });
+  assert.deepEqual(row.data.tags, ["help", "news"]);
+  assert(translated.schema.safeParse(row.data).success);
+  const [invalid] = planImport(
+    {
+      pages: [
+        ["_key", "title", "tags"],
+        ["one", "Page 1", "hello,world"],
+      ],
+    },
+    translatedRegistry,
+    "sheet",
+  );
+  assert.deepEqual(invalid.data.tags, ["hello", "world"]);
+  assert.equal(translated.schema.safeParse(invalid.data).success, false);
+  assert.throws(
+    () =>
+      planImport(
+        {
+          pages: [
+            ["_key", "blocks"],
+            ["one", "hello,world"],
+          ],
+        },
+        translatedRegistry,
+        "sheet",
+      ),
+    /invalid cell/,
+  );
+});
+test("nested header conflicts, unknown paths, and unsafe keys are rejected", () => {
+  for (const headers of [
+    ["translations", "translations.en"],
+    ["translations.en", "translations.en"],
+    ["translations.unknown"],
+    ["translations.__proto__.polluted"],
+    ["translations.constructor.prototype"],
+    ["title.en"],
+  ])
+    assert.throws(() =>
+      planImport(
+        {
+          pages: [
+            ["_key", ...headers],
+            ["one", ...headers.map(() => "x")],
+          ],
+        },
+        translatedRegistry,
+        "sheet",
+      ),
+    );
+  assert.equal({}.polluted, undefined);
+});
+test("nested re-import preserves blank siblings and create uses object defaults", async () => {
+  const db = memoryDb();
+  let rows = [
+    [
+      "_key",
+      "title",
+      "translations.en",
+      "translations.tc",
+      "translations.sc",
+      "tags",
+    ],
+    ["one", "Page 1", "English", "繁體", "简体", "news"],
+  ];
+  const importer = new DatabaseImporter(
+    db,
+    translatedRegistry,
+    { keyFile: "key", spreadsheetId: "sheet" },
+    { read: async () => ({ pages: rows }) },
+  );
+  await importer.run();
+  rows = [
+    ["_key", "translations.en", "translations.tc", "tags"],
+    ["one", "Updated", "", "help, news"],
+  ];
+  await importer.run();
+  let stored = [...db.stored.pages.values()][0];
+  assert.deepEqual(stored.translations, {
+    en: "Updated",
+    tc: "繁體",
+    sc: "简体",
+  });
+  assert.deepEqual(stored.tags, ["help", "news"]);
+  rows = [
+    ["_key", "title", "translations.en"],
+    ["two", "Page 2", "Second"],
+  ];
+  await importer.run();
+  stored = [...db.stored.pages.values()].find((row) => row.title === "Page 2");
+  assert.deepEqual(stored.translations, { en: "Second", tc: "", sc: "" });
+  rows = [
+    ["_key", "tags"],
+    ["one", "[]"],
+  ];
+  await importer.run();
+  assert.deepEqual(
+    db.stored.pages.get(importRecordId("sheet", "pages", "one")).tags,
+    [],
+  );
 });
