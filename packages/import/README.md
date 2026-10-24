@@ -74,10 +74,13 @@ Treat keys as permanent identities, not row numbers. No `id` column is needed.
 
 | pages | | |
 | --- | --- | --- |
-| _key | title | categoryId@categories |
+| _key | title | categoryId |
 | welcome | Welcome | news |
 
-`field@resource` must match a declared single-column foreign key to the target's `id`.
+Plain headers such as `categoryId` infer their target from a declared single-column
+foreign key to the target's `id`. Cell values remain target `_key` values, not raw
+UUIDs. Legacy `field@resource` headers remain supported and must match the declared
+foreign key. Ambiguous targets require an explicit `field@resource` header.
 Put the target `_key` in the cell. Records are ordered automatically. References to
 excluded tabs work only if those keys have already been imported into this database.
 Missing references and circular references fail the import.

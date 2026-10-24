@@ -601,3 +601,34 @@ test("attachment imports stage once, deduplicate reimports, validate dry-runs an
   assert.deepEqual(events, []);
   assert.equal(published.size, 1);
 });
+
+
+test("plain foreign-key headers infer the same references as explicit headers", () => {
+  const inferred = structuredClone(sheets);
+  inferred.pages[0][2] = "categoryId";
+  assert.deepEqual(orderRows(planImport(inferred, registry, "sheet")), orderRows(planImport(sheets, registry, "sheet")));
+  for (const value of ["", "null"]) {
+    inferred.pages[1][2] = value;
+    const row = planImport(inferred, registry, "sheet").find(row => row.resource === "pages");
+    assert.equal(row.references.length, 0);
+    assert.equal(row.data.categoryId, value === "null" ? null : undefined);
+  }
+  for (const headers of [["_key", "categoryId", "categoryId@categories"], ["_key", "categoryId@pages"], ["_key", "categoryId@"]])
+    assert.throws(() => planImport({ pages: [headers, ["a", "news", "news"]] }, registry, "sheet"));
+  const ambiguous = new ResourceRegistry([defs[0], { ...defs[1], foreignKeys: [...defs[1].foreignKeys, { target: "pages", columnNames: ["categoryId"], referencedColumnNames: ["id"] }] }]);
+  assert.throws(() => planImport({ pages: [["_key", "categoryId"], ["a", "news"]] }, ambiguous, "sheet"), /ambiguous foreign key/);
+  assert.equal(planImport(sheets, ambiguous, "sheet")[0].references[0].resource, "categories");
+});
+
+test("inferred foreign keys import in dependency order and reject missing targets", async () => {
+  const db = memoryDb();
+  const inferred = structuredClone(sheets);
+  inferred.pages[0][2] = "categoryId";
+  const reader = { read: async () => inferred };
+  const importer = new DatabaseImporter(db, registry, { keyFile: "key.json", spreadsheetId: "sheet" }, reader);
+  await importer.run();
+  assert.equal([...db.stored.pages.values()][0].categoryId, [...db.stored.categories.keys()][0]);
+  inferred.pages[1][2] = "missing";
+  await assert.rejects(importer.run(), /missing reference categories.missing/);
+  assert.equal([...db.stored.pages.values()][0].categoryId, [...db.stored.categories.keys()][0]);
+});

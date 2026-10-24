@@ -106,7 +106,8 @@ export function planImport(
         return { field: header, attachment };
       }
       const parts = header.split("@");
-      const [field, target] = parts;
+      const [field, explicitTarget] = parts;
+      let target = explicitTarget;
       const path = field.split(".");
       const root = path[0];
       if (
@@ -140,20 +141,22 @@ export function planImport(
         )
       )
         throw new Error(`${resource}: dotted columns require a JSON field.`);
+      const foreignKeys = (definition.foreignKeys ?? []).filter(
+        (fk) => fk.columnNames.length === 1 &&
+          fk.columnNames[0] === field &&
+          fk.referencedColumnNames?.length === 1 &&
+          fk.referencedColumnNames[0] === "id",
+      );
       if (parts.length === 2) {
-        registry.get(target);
-        const fk = definition.foreignKeys?.find(
-          (fk) =>
-            fk.columnNames.length === 1 &&
-            fk.columnNames[0] === field &&
-            fk.target === target &&
-            fk.referencedColumnNames?.[0] === "id",
-        );
-        if (!fk)
-          throw new Error(
-            `${resource}: ${header} must match a declared foreign key to id.`,
-          );
+        if (!target || !foreignKeys.some((fk) => fk.target === target))
+          throw new Error(`${resource}: ${header} must match a declared foreign key to id.`);
+      } else if (foreignKeys.length) {
+        const targets = [...new Set(foreignKeys.map((fk) => fk.target))];
+        if (targets.length !== 1 || typeof targets[0] !== "string")
+          throw new Error(`${resource}: ambiguous foreign key ${field}. Use field@resource with a registered target.`);
+        target = targets[0];
       }
+      if (target) registry.get(target);
       return { field, target, path, schema };
     });
     for (let index = 1; index < values.length; index++) {
