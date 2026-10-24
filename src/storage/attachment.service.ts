@@ -4,7 +4,7 @@ import {
   NotFoundException,
   PayloadTooLargeException,
 } from "@nestjs/common";
-import { DataSource } from "typeorm";
+import { DataSource, EntityManager } from "typeorm";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { config } from "../config";
@@ -32,6 +32,53 @@ export class AttachmentService {
   async upload(
     resource: string,
     id: string,
+    field: string,
+    file?: UploadedAttachment,
+  ) {
+    const input = this.validateFile(resource, field, file);
+    const definition = this.field(resource, field);
+    const attachmentId = randomUUID();
+    const key = `attachments/${resource}/${id}/${field}/${attachmentId}`;
+    // Retain the existing storage schema so previously stored attachments remain readable.
+    // New uploads never use a staging object or issue browser-accessible storage URLs.
+    await this.db.transaction(async (manager) => {
+      await this.records.find(manager, resource, id, true);
+      return manager.getRepository(AttachmentEntity).save({
+        id: attachmentId,
+        resource,
+        recordId: id,
+        field,
+        ...input,
+        key,
+        stagingKey: "",
+        expiresAt: new Date(),
+        status: "pending",
+      });
+    });
+    // Persist pending metadata before writing S3 so failures remain discoverable by cleanup.
+    // Upload is bounded to five minutes; cleanup only considers pending rows after one hour.
+    await this.s3.upload(key, file!.buffer, input.mimeType);
+    return this.db.transaction(async (manager) => {
+      await this.records.find(manager, resource, id, true);
+      const repo = manager.getRepository(AttachmentEntity);
+      const current = await repo.findOne({
+        where: { id: attachmentId },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!current || current.status !== "pending")
+        throw new NotFoundException("Upload no longer available");
+      if (!definition.multiple)
+        await repo.update(
+          { resource, recordId: id, field, status: "ready" },
+          { status: "deleted" },
+        );
+      current.status = "ready";
+      await repo.save(current);
+      return attachmentMetadata(current);
+    });
+  }
+  private validateFile(
+    resource: string,
     field: string,
     file?: UploadedAttachment,
   ) {
@@ -67,46 +114,94 @@ export class AttachmentService {
         size: file.buffer.length,
       },
     );
-    const attachmentId = randomUUID();
-    const key = `attachments/${resource}/${id}/${field}/${attachmentId}`;
-    // Retain the existing storage schema so previously stored attachments remain readable.
-    // New uploads never use a staging object or issue browser-accessible storage URLs.
-    await this.db.transaction(async (manager) => {
-      await this.records.find(manager, resource, id, true);
-      return manager.getRepository(AttachmentEntity).save({
-        id: attachmentId,
-        resource,
-        recordId: id,
-        field,
-        ...input,
-        key,
-        stagingKey: "",
-        expiresAt: new Date(),
-        status: "pending",
-      });
-    });
-    // Persist pending metadata before writing S3 so failures remain discoverable by cleanup.
-    // Upload is bounded to five minutes; cleanup only considers pending rows after one hour.
-    await this.s3.upload(key, file.buffer, input.mimeType);
-    return this.db.transaction(async (manager) => {
-      await this.records.find(manager, resource, id, true);
-      const repo = manager.getRepository(AttachmentEntity);
-      const current = await repo.findOne({
-        where: { id: attachmentId },
-        lock: { mode: "pessimistic_write" },
-      });
-      if (!current || current.status !== "pending")
-        throw new NotFoundException("Upload no longer available");
-      if (!definition.multiple)
-        await repo.update(
-          { resource, recordId: id, field, status: "ready" },
-          { status: "deleted" },
-        );
-      current.status = "ready";
-      await repo.save(current);
-      return attachmentMetadata(current);
-    });
+    return input;
   }
+
+  /** Standalone import runner; close it after use to release the storage client. */
+  static forImport(db: DataSource, registry: ResourceRegistry) {
+    const storage = new S3Service();
+    return {
+      service: new AttachmentService(
+        db,
+        registry,
+        new ResourceRecordStore(registry),
+        storage,
+      ),
+      close: () => storage.onModuleDestroy(),
+    };
+  }
+
+  importMaxBytes(resource: string, field: string) {
+    return Math.min(
+      this.field(resource, field).maxBytes ?? config.ATTACHMENT_MAX_BYTES,
+      config.ATTACHMENT_MAX_BYTES,
+    );
+  }
+
+  async hasImported(
+    id: string,
+    resource: string,
+    recordId: string,
+    field: string,
+  ) {
+    return this.db
+      .getRepository(AttachmentEntity)
+      .existsBy({ id, resource, recordId, field, status: "ready" });
+  }
+
+  /** Persist pending metadata outside the row transaction so failed imports remain cleanable. */
+  async stageImport(
+    resource: string,
+    recordId: string,
+    field: string,
+    file: UploadedAttachment,
+  ) {
+    const input = this.validateFile(resource, field, file);
+    const id = randomUUID();
+    const pending = await this.db.getRepository(AttachmentEntity).save({
+      id,
+      resource,
+      recordId,
+      field,
+      ...input,
+      key: `attachments/${resource}/${recordId}/${field}/${id}`,
+      stagingKey: "",
+      expiresAt: new Date(),
+      status: "pending" as const,
+    });
+    await this.s3.upload(pending.key, file.buffer, input.mimeType);
+    return pending.id;
+  }
+
+  /** Publish staged metadata atomically with imported rows, using a stable source identity. */
+  async commitImport(manager: EntityManager, pendingId: string, id: string) {
+    const repo = manager.getRepository(AttachmentEntity);
+    const pending = await repo.findOneByOrFail({
+      id: pendingId,
+      status: "pending",
+    });
+    const definition = this.field(pending.resource, pending.field);
+    const existing = await repo.findOneBy({ id });
+    if (existing?.status === "ready") {
+      await repo.update({ id: pendingId }, { status: "deleted" });
+      return;
+    }
+    if (!definition.multiple)
+      await repo.update(
+        {
+          resource: pending.resource,
+          recordId: pending.recordId,
+          field: pending.field,
+          status: "ready",
+        },
+        { status: "deleted" },
+      );
+    if (existing)
+      await repo.save({ ...existing, id: randomUUID(), status: "deleted" });
+    await repo.save({ ...pending, id, status: "ready" });
+    await repo.delete({ id: pendingId });
+  }
+
   private async findRecord(
     resource: string,
     id: string,

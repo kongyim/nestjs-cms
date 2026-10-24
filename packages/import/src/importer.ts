@@ -1,3 +1,6 @@
+import { AttachmentService } from "@nestjs-cms/core";
+import { downloadAttachment } from "./download";
+import { importRecordId } from "./plan";
 import { getPath, setPath } from "./cells";
 import { ConflictException, ForbiddenException } from "@nestjs/common";
 import type {
@@ -24,6 +27,8 @@ export class DatabaseImporter {
     private readonly registry: ResourceRegistry,
     private readonly options: ImportOptions,
     private readonly reader: SheetReader = new GoogleSheetReader(),
+    private readonly attachmentService?: AttachmentService,
+    private readonly download = downloadAttachment,
   ) {}
 
   async run(
@@ -35,6 +40,8 @@ export class DatabaseImporter {
     if (this.running)
       throw new ConflictException("A database import is already running.");
     this.running = true;
+    let ownedStorage:
+      ReturnType<typeof AttachmentService.forImport> | undefined;
     try {
       validateOptions(this.options);
       const names = this.options.resources?.length
@@ -66,6 +73,55 @@ export class DatabaseImporter {
         resources: {},
         skippedSheets: names.filter((name) => !Object.hasOwn(selected, name)),
       };
+      const staged: { row: ImportRow; pendingId: string; id: string }[] = [];
+      let storage = this.attachmentService;
+      // Stage before the serializable snapshot so pending metadata is visible inside it.
+      // Pending uploads survive rollback and are handled by the regular storage cleanup.
+      for (const row of rows) {
+        for (const attachment of row.attachments ?? []) {
+          if (!storage) {
+            ownedStorage = AttachmentService.forImport(this.db, this.registry);
+            storage = ownedStorage.service;
+          }
+          const field = this.registry
+            .get(row.resource)
+            .attachments!.find((item) => item.field === attachment.field)!;
+          for (const url of attachment.urls) {
+            const id = importRecordId(
+              this.options.spreadsheetId,
+              row.resource,
+              JSON.stringify([row.key, attachment.field, url]),
+            );
+            if (
+              !result.dryRun &&
+              (await storage.hasImported(id, row.resource, row.id, field.field))
+            )
+              continue;
+            try {
+              const file = await this.download(
+                url,
+                field,
+                storage.importMaxBytes(row.resource, field.field),
+              );
+              if (!result.dryRun)
+                staged.push({
+                  row,
+                  id,
+                  pendingId: await storage.stageImport(
+                    row.resource,
+                    row.id,
+                    field.field,
+                    file,
+                  ),
+                });
+            } catch {
+              throw new Error(
+                `${row.resource} row ${row.row}, ${field.field}: could not import attachment. Check the public file URL, MIME type, size, and storage settings. No rows were imported.`,
+              );
+            }
+          }
+        }
+      }
       await this.db.transaction("SERIALIZABLE", async (manager) => {
         // Database-wide lock also serializes imports started by a separate CLI/process.
         // Postgres releases transaction advisory locks automatically; MySQL uses connection locks below.
@@ -208,6 +264,19 @@ export class DatabaseImporter {
               );
             }
           }
+          for (const attachment of staged) {
+            try {
+              await storage!.commitImport(
+                manager,
+                attachment.pendingId,
+                attachment.id,
+              );
+            } catch {
+              throw new Error(
+                `${attachment.row.resource} row ${attachment.row.row}: could not save attachments. No rows were imported.`,
+              );
+            }
+          }
         } finally {
           if (mysql)
             await manager.query("SELECT RELEASE_LOCK('nestjs-cms-import')");
@@ -215,6 +284,7 @@ export class DatabaseImporter {
       });
       return result;
     } finally {
+      ownedStorage?.close();
       this.running = false;
     }
   }

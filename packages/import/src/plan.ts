@@ -1,3 +1,4 @@
+import { attachmentUrl } from "./download";
 import { fieldSchema, setPath, stringArray, cellType } from "./cells";
 import type { z } from "@nestjs-cms/core";
 import { createHash } from "node:crypto";
@@ -11,6 +12,7 @@ export interface ImportRow {
   id: string;
   data: Record<string, unknown>;
   nestedPaths?: string[][];
+  attachments?: { field: string; urls: string[] }[];
   references: { field: string; resource: string; key: string; id: string }[];
 }
 
@@ -94,6 +96,15 @@ export function planImport(
     const columns = headers.map((header) => {
       if (!header) return null;
       if (header === "_key") return { field: "_key" };
+      const attachment = definition.attachments?.find(
+        (item) => item.field === header,
+      );
+      if (attachment) {
+        if (fields.has(header))
+          throw new Error(`${resource}: unknown or duplicate column ${header}.`);
+        fields.add(header);
+        return { field: header, attachment };
+      }
       const parts = header.split("@");
       const [field, target] = parts;
       const path = field.split(".");
@@ -178,7 +189,21 @@ export function planImport(
           );
         if (header.field === "_key") continue;
         try {
-          if (header.target && value !== "null") {
+          if (header.attachment) {
+            if (typeof value !== "string")
+              throw new Error("Expected file URLs.");
+            const urls = [
+              ...new Set(
+                value.split(",").map((url) => attachmentUrl(url.trim()).href),
+              ),
+            ];
+            if (
+              !urls.length ||
+              (!header.attachment.multiple && urls.length !== 1)
+            )
+              throw new Error("Expected one file URL.");
+            (row.attachments ??= []).push({ field: header.field, urls });
+          } else if (header.target && value !== "null") {
             const refKey = String(value).trim();
             const ref = {
               field: header.field,

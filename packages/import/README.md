@@ -92,8 +92,8 @@ Missing references and circular references fail the import.
 - Blank cells omit a field: new rows use schema defaults; updates keep stored values.
 - The literal `null` clears a nullable field. To set an empty string where needed,
   use a resource-specific editing workflow; blank sheet cells mean omission.
-- Passwords and attachment uploads are not imported. Use the auth password endpoint
-  and attachment APIs. User/role extension fields work like other persisted fields.
+- Passwords are not imported. Use the auth password endpoint. Attachment URL columns
+  are supported as described below. User/role extension fields work like other persisted fields.
 - Explicit resource limits are validated; resources without matching tabs are reported
   as `skippedSheets`. Empty tabs contain no imported records.
 
@@ -138,3 +138,35 @@ remain supported, including `[]` to clear a field or `["a,b"]` for a string cont
 a comma. Non-string arrays and object-valued cells still require JSON. Conversion
 does not bypass schema validation: string-enum arrays still enforce their allowed
 values. The demo tags use a free-form nonempty string schema.
+
+## Import attachment URLs
+
+Use the attachment field name as the column header, such as `cover` or `documents`.
+The importer reads the resource's `attachments` definition to determine whether the
+field accepts one URL or comma-separated URLs (`multiple: true`). Single attachment
+fields reject multiple URLs. No header suffix is needed.
+
+| _key | title | cover | documents |
+| --- | --- | --- | --- |
+| welcome | Welcome | https://example.com/cover.jpg | https://example.com/guide.pdf, https://example.com/terms.pdf |
+
+Cells contain plain direct HTTP(S) file URLs, not hyperlink labels or HTML preview
+pages. Percent-encode any literal comma in a URL as `%2C`. Blank cells preserve
+attachments. `null` is not supported for attachment cells; remove files through the
+attachment API. Repeated URLs are deduplicated. A changed single URL replaces the
+previous attachment; multiple URLs append files. Removing a URL from the sheet does
+not delete an existing attachment. Reimporting an unchanged URL reuses its imported
+attachment, even if the remote file contents have changed; use a new URL to refresh it.
+
+Downloads enforce each field's allowed MIME types and the smaller of its size limit
+and the global attachment limit. Files must be publicly accessible; private/local
+network addresses, credential-bearing URLs and redirects to private addresses are
+rejected. Downloads have a 30-second timeout and at most five redirects. Google
+Drive preview/share pages must be replaced with publicly downloadable file URLs.
+
+`--dry-run` downloads and checks the files but does not upload them or write rows.
+A real import stages files in configured object storage, then commits ready metadata
+in the same database transaction as the records. Failed imports leave pending files
+for the regular storage cleanup job; existing records and ready attachments remain
+unchanged. Object storage must be configured just as it is for API uploads. This
+feature requires core and import packages built with attachment import support.

@@ -441,3 +441,163 @@ test("nested re-import preserves blank siblings and create uses object defaults"
     [],
   );
 });
+
+test("attachment columns infer cardinality from resources and reject invalid headers and cells", () => {
+  const attachmentRegistry = new ResourceRegistry([
+    {
+      ...defs[1],
+      attachments: [
+        { field: "cover", mimeTypes: ["image/png"] },
+        { field: "documents", multiple: true, mimeTypes: ["application/pdf"] },
+      ],
+    },
+  ]);
+  const row = planImport(
+    {
+      pages: [
+        ["_key", "title", "cover", "documents"],
+        [
+          "a",
+          "A",
+          "https://example.com/a.png",
+          "https://example.com/a.pdf, https://example.com/b.pdf, https://example.com/a.pdf",
+        ],
+      ],
+    },
+    attachmentRegistry,
+    "sheet",
+  )[0];
+  assert.deepEqual(row.data, { title: "A" });
+  assert.deepEqual(row.attachments, [
+    { field: "cover", urls: ["https://example.com/a.png"] },
+    {
+      field: "documents",
+      urls: ["https://example.com/a.pdf", "https://example.com/b.pdf"],
+    },
+  ]);
+  for (const [header, value] of [
+    ["cover/files", "https://example.com/a.png"],
+    ["documents/file", "https://example.com/a.pdf"],
+    ["unknown/file", "https://example.com/a.png"],
+    ["cover", "https://example.com/a.png,https://example.com/b.png"],
+    ["cover", "file:///etc/passwd"],
+    ["cover", "http://127.0.0.1/a"],
+    ["cover", "http://user:password@example.com/a"],
+    ["cover", "null"],
+  ])
+    assert.throws(() =>
+      planImport(
+        {
+          pages: [
+            ["_key", "title", header],
+            ["a", "A", value],
+          ],
+        },
+        attachmentRegistry,
+        "sheet",
+      ),
+    );
+  assert.throws(() =>
+    planImport(
+      {
+        pages: [
+          ["_key", "cover", "cover"],
+          ["a", "", ""],
+        ],
+      },
+      attachmentRegistry,
+      "sheet",
+    ),
+  );
+  assert.equal(
+    planImport(
+      {
+        pages: [
+          ["_key", "title", "cover"],
+          ["a", "A", ""],
+        ],
+      },
+      attachmentRegistry,
+      "sheet",
+    )[0].attachments,
+    undefined,
+  );
+});
+
+test("attachment imports stage once, deduplicate reimports, validate dry-runs and preserve rows on failures", async () => {
+  const db = memoryDb();
+  const attachmentRegistry = new ResourceRegistry([
+    { ...defs[1], attachments: [{ field: "cover", mimeTypes: ["image/png"] }] },
+  ]);
+  const reader = {
+    read: async () => ({
+      pages: [
+        ["_key", "title", "cover"],
+        ["a", "A", "https://example.com/a.png"],
+      ],
+    }),
+  };
+  const published = new Set();
+  const events = [];
+  let failDownload = false,
+    failCommit = false;
+  const storage = {
+    hasImported: async (id) => published.has(id),
+    importMaxBytes: () => 100,
+    stageImport: async (...args) => {
+      events.push("stage");
+      assert.equal(db.stored.pages.size, 0);
+      return "pending";
+    },
+    commitImport: async (manager, pending, id) => {
+      events.push("commit");
+      if (failCommit) throw Error("private storage error");
+      published.add(id);
+    },
+  };
+  const download = async () => {
+    events.push("download");
+    if (failDownload) throw Error("private URL");
+    return {
+      originalname: "a.png",
+      mimetype: "image/png",
+      buffer: Buffer.from("png"),
+    };
+  };
+  const importer = new DatabaseImporter(
+    db,
+    attachmentRegistry,
+    { spreadsheetId: "sheet", keyFile: "key.json" },
+    reader,
+    storage,
+    download,
+  );
+  await assert.rejects(
+    importer.run({ canWrite: () => false }),
+    /No write permission/,
+  );
+  assert.deepEqual(events, []);
+  await importer.run({ dryRun: true });
+  assert.deepEqual(events, ["download"]);
+  assert.equal(db.stored.pages.size, 0);
+  events.length = 0;
+  failDownload = true;
+  await assert.rejects(
+    importer.run(),
+    /pages row 2, cover: could not import attachment/,
+  );
+  assert.equal(db.stored.pages.size, 0);
+  failDownload = false;
+  failCommit = true;
+  await assert.rejects(importer.run(), /could not save attachments/);
+  assert.equal(db.stored.pages.size, 0);
+  failCommit = false;
+  events.length = 0;
+  await importer.run();
+  assert.deepEqual(events, ["download", "stage", "commit"]);
+  assert.equal(db.stored.pages.size, 1);
+  events.length = 0;
+  await importer.run();
+  assert.deepEqual(events, []);
+  assert.equal(published.size, 1);
+});
