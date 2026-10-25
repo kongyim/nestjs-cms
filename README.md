@@ -1101,7 +1101,6 @@ cp .env.example .env
 docker compose up -d
 # Wait for postgres/rustfs to be healthy.
 # Create the private S3_BUCKET through http://localhost:9001 on first setup.
-npm run seed
 npm run dev
 ```
 

@@ -14,7 +14,6 @@
     "db:migrate": "typeorm-ts-node-commonjs migration:run -d src/database/data-source.ts",
     "db:revert": "typeorm-ts-node-commonjs migration:revert -d src/database/data-source.ts",
     "db:generate": "typeorm-ts-node-commonjs migration:generate -d src/database/data-source.ts",
-    "seed": "ts-node scripts/seed.ts",
     "storage:cleanup": "ts-node scripts/cleanup.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

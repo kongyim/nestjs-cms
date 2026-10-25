@@ -1,6 +1,6 @@
 # Development, storage, and deployment
 
-The quick start in the README is for applications that install `@nestjs-cms/core`. Commands involving this repository's `docker-compose.yml`, seed script, or demo migration are for library contributors. A consuming application owns its database, migrations, startup scripts, and storage provisioning.
+The quick start in the README is for applications that install `@nestjs-cms/core`. Commands involving this repository's `docker-compose.yml` or demo migration are for library contributors. A consuming application owns its database, migrations, startup scripts, and storage provisioning.
 
 ## Environment
 
@@ -64,8 +64,7 @@ PostgreSQL 17 is the default, exposed on host port 5432. MySQL 8.4 is an optiona
 ```sh
 docker compose --profile mysql up -d mysql
 # Alternatively, change these values in .env.
-DB_TYPE=mysql DB_PORT=3307 DB_SYNCHRONIZE=true npm run seed
-DB_TYPE=mysql DB_PORT=3307 npm run dev
+DB_TYPE=mysql DB_PORT=3307 DB_SYNCHRONIZE=true npm run dev
 ```
 
 Both services initialize separate `cms` and `cms_test` databases. Switching drivers does not transfer data. Resource definitions use compatible JSON storage, UUID varchar columns, SQL types, parameterized queries, and row locks. Search case sensitivity depends on database collation and may differ between drivers.
