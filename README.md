@@ -2,181 +2,25 @@
 
 Add a resource-driven CMS backend to a NestJS application. Define each resource in one file; the module discovers it and provides validated CRUD APIs, filters, lifecycle hooks, and S3-backed attachments.
 
-For a complete API and admin workspace with login, start with
-[Build a CMS from scratch](#build-a-cms-from-scratch), or
-[use the demo as a template](#build-your-own-cms-repository). For a backend-only
-integration into a new NestJS application, follow the quick start below.
+Start below to create a complete local CMS project with this structure:
 
-## Quick start
-
-Requires Node.js 22+, npm, and a PostgreSQL database. The package supports NestJS 11 with the Express adapter.
-
-### 1. Create a NestJS project and install the package
-
-```sh
-npx @nestjs/cli@11 new nestjs-cms-demo --package-manager npm
-cd nestjs-cms-demo
-npm install @nestjs-cms/core
+```text
+.
+├── apps
+│   ├── admin
+│   └── api
+├── docker-compose.yml
+├── package-lock.json
+├── package.json
+└── README.md
 ```
 
-The npm package includes compiled JavaScript and TypeScript declarations. Imports use `"@nestjs-cms/core"`.
+The setup also creates a shared `.env` and `.gitignore`. It includes administrator
+login, users and roles, a Pages editor with image uploads, PostgreSQL, and RustFS.
+Follow all eight steps once; afterwards, start the project with `npm run dev`.
 
-The package includes Zod, TypeORM, PostgreSQL/MySQL drivers, dotenv, and the S3 client. The NestJS project supplies the NestJS runtime dependencies.
-
-### 2. Create a resource
-
-```sh
-mkdir -p src/resources
-```
-
-Create `src/resources/pages.ts`:
-
-```ts
-import { defineResource, z } from "@nestjs-cms/core";
-
-export default defineResource({
-  name: "pages",
-  schema: z
-    .object({
-      title: z.string().trim().min(1).max(200),
-      status: z.enum(["draft", "published"]).default("draft"),
-    })
-    .strict(),
-  columns: {
-    title: { type: String, length: 200 },
-    status: { type: String, length: 20 },
-  },
-  filterable: ["title", "status"],
-  sortable: ["title", "createdAt"],
-});
-```
-
-Keep the folder inside `src` so the standard Nest compiler builds it into `dist/resources`. Each additional resource requires only one new file in this folder. No resource index or per-resource registration is needed.
-
-### 3. Import the CMS module once
-
-Add `ResourceModule.forRoot(...)` to the `imports` array in `src/app.module.ts`:
-
-```ts
-import { Module } from "@nestjs/common";
-import { join } from "node:path";
-import { ResourceModule } from "@nestjs-cms/core";
-
-@Module({
-  imports: [
-    ResourceModule.forRoot({ resourcesPath: join(__dirname, "resources") }),
-  ],
-})
-export class AppModule {}
-```
-
-You can keep your existing controllers, providers, and other imports. The module's API-key guard and error filter apply only to CMS routes.
-
-### 4. Configure `.env`
-
-Create `.env` in the new project's root:
-
-```dotenv
-NODE_ENV=development
-PORT=3000
-DB_TYPE=postgres
-DB_HOST=127.0.0.1
-DB_PORT=5432
-DB_USERNAME=cms
-DB_PASSWORD=cms_dev_password
-DB_DATABASE=cms
-DB_SYNCHRONIZE=true
-ADMIN_API_KEY=
-CORS_ORIGINS=
-```
-
-Use credentials for an existing PostgreSQL database. The package loads `.env` automatically. With `DB_SYNCHRONIZE=true`, it creates the resource tables in that database during startup. Use migrations instead in production.
-
-If you need a local database and port 5432 is available:
-
-```sh
-docker run --name nestjs-cms-demo-postgres -d \
-  -e POSTGRES_USER=cms -e POSTGRES_PASSWORD=cms_dev_password -e POSTGRES_DB=cms \
-  -p 127.0.0.1:5432:5432 postgres:17-alpine
-```
-
-Wait for PostgreSQL to be ready before starting the application. The example above supports plain resource CRUD. **Attachments also require working S3/RustFS storage and an attachment field in the resource definition.**
-
-### 4a. Configure storage for attachments
-
-For existing MinIO data, follow the [storage migration instructions](docs/operations.md#migrating-existing-minio-storage) before switching services.
-
-For local RustFS, add these settings to your application's `.env`:
-
-```dotenv
-S3_REGION=us-east-1
-S3_BUCKET=cms-attachments
-S3_ENDPOINT=http://127.0.0.1:9000
-S3_FORCE_PATH_STYLE=true
-S3_ACCESS_KEY_ID=rustfsadmin
-S3_SECRET_ACCESS_KEY=rustfsadmin123
-ATTACHMENT_MAX_BYTES=20971520
-```
-
-These credentials match this library's development Compose setup. From the `nestjs-cms` repository checkout, start storage with:
-
-```sh
-docker compose up -d rustfs
-```
-
-Wait for RustFS to become healthy. Open http://localhost:9001, sign in with the configured S3 credentials, and create the private `cms-attachments` bucket once. The npm package does not start storage or include the Compose setup. You can also use an existing RustFS server: supply its endpoint and credentials and create the bucket beforehand. The endpoint above assumes the application runs on your host machine.
-
-For AWS S3 instead, use your bucket's region and name, omit `S3_ENDPOINT`, and set `S3_FORCE_PATH_STYLE=false`. Supply both credential variables, or omit both when using an IAM role. See [AWS S3 configuration](docs/operations.md#aws-s3-configuration) for permissions.
-
-In `src/resources/pages.ts`, add this property to the existing `defineResource({...})` object:
-
-```ts
-attachments: [
-  { field: "cover", mimeTypes: ["image/jpeg", "image/png", "image/webp"] },
-],
-```
-
-Attachment fields are declared separately from the Zod schema and database columns. After restarting the application and creating a page, upload a file using its record ID:
-
-```sh
-curl -X POST http://localhost:3000/api/pages/RECORD_ID/attachments/cover \
-  -F 'file=@/absolute/path/to/cover.png'
-```
-
-Replace `RECORD_ID` and the file path with your values. If `ADMIN_API_KEY` is configured, include the `X-API-Key` header. Uploads and downloads always pass through the backend attachment API; the browser never connects directly to S3/RustFS.
-
-Without working object storage, the application can start and plain resource CRUD still works. Storage is contacted when an attachment operation needs it: uploads fail with HTTP 503 (`Object storage upload unavailable`), and downloads of existing attachments fail with HTTP 503 (`Attachment content unavailable`). There is no local-filesystem fallback. Omitting the S3 settings does not disable attachments; the client uses the default region/bucket and AWS credential chain, which only works if that environment already has access to the matching storage.
-
-### 5. Start the application
-
-```sh
-npm run start:dev
-```
-
-```sh
-curl http://localhost:3000/api/_resources
-curl -X POST http://localhost:3000/api/pages \
-  -H 'Content-Type: application/json' \
-  -d '{"title":"About us"}'
-curl http://localhost:3000/api/pages
-```
-
-After adding or removing resource files, rebuild/restart the application. The standard Nest CLI TypeScript build emits the resource files separately; bundlers require additional configuration to preserve those files for runtime discovery.
-
-For production, run the host project's `npm run build` and `npm run start:prod`, disable schema synchronization, and apply reviewed migrations. The library does not run or install its demo migrations in your application.
-
-### Optional: CORS and shutdown hooks
-
-Same-origin frontends do not require CORS. To apply `CORS_ORIGINS` for a separate frontend and enable graceful shutdown, call the helper in your application's existing `src/main.ts`:
-
-```ts
-import { configureCmsApp } from "@nestjs-cms/core";
-
-// After NestFactory.create(AppModule), before app.listen(...):
-configureCmsApp(app);
-```
-
-Set `CORS_ORIGINS=http://localhost:5173`, for example. Your host application still controls its listening port, bind address, and bootstrap process. If it already manages CORS and shutdown hooks, keep that configuration instead.
+For an existing NestJS application, see the [backend-only quick start](#backend-only-quick-start).
+You can also [use the demo as a template](#build-your-own-cms-repository).
 
 ## Build a CMS from scratch
 
@@ -201,7 +45,7 @@ cd my-cms
 git init
 mkdir apps
 npx @nestjs/cli@11 new api --directory apps/api --package-manager npm --skip-git --skip-install
-npx create-next-app@16 apps/admin --ts --app --src-dir --eslint --no-tailwind --use-npm --import-alias "@/*" --skip-install --disable-git
+npx create-next-app@16 apps/admin --ts --app --src-dir --eslint --no-tailwind --use-npm --import-alias "@/*" --skip-install --disable-git --yes
 ```
 
 For any additional Next.js prompts, keep the defaults. These commands use NestJS
@@ -218,6 +62,10 @@ Create `package.json` in the repository root:
   "private": true,
   "workspaces": ["apps/*"],
   "scripts": {
+    "dev": "npm run services:up && concurrently --kill-others -n api,admin \"npm:dev:api\" \"npm:dev:admin\"",
+    "services:up": "docker compose up -d --wait",
+    "services:down": "docker compose down",
+    "storage:cleanup": "npm exec --workspace=apps/api -- ts-node src/cleanup.ts",
     "dev:api": "npm run start:dev --workspace=apps/api",
     "dev:admin": "npm run dev --workspace=apps/admin -- --hostname 127.0.0.1 --port 3001",
     "build": "npm run build --workspaces",
@@ -245,6 +93,7 @@ Run all remaining shell commands from this repository root unless stated otherwi
 
 ```sh
 npm install
+npm install --save-dev concurrently
 npm install @nestjs-cms/core@latest @nestjs-cms/auth@latest dotenv --workspace=apps/api
 npm install @nestjs-cms/admin@latest @mui/material-nextjs@9 @emotion/cache --workspace=apps/admin
 mkdir -p apps/api/src/resources apps/admin/src/sections
@@ -260,6 +109,7 @@ my-cms/
   .env                     Local settings, excluded from Git
   package.json
   package-lock.json
+  README.md                Project instructions created in step 8
 ```
 
 ### 2. Create the shared environment file
@@ -299,7 +149,7 @@ accounts and passwords are never overwritten. `ADMIN_API_KEY` may be empty for
 local development because session authentication still protects the API. No
 secret is passed to the frontend.
 
-### 3. Create Docker Compose and the storage files
+### 3. Start the database and storage
 
 Create `docker-compose.yml` in the repository root:
 
@@ -354,9 +204,8 @@ initializer scripts are needed. The setup follows the
 Start the services:
 
 ```sh
-docker compose up -d
+npm run services:up
 docker compose ps -a
-docker compose logs rustfs
 ```
 
 Continue when PostgreSQL and RustFS are healthy, then create the attachment bucket
@@ -367,7 +216,6 @@ before uploading files or running a spreadsheet import that includes attachments
 3. Create a bucket whose name exactly matches `S3_BUCKET` (`cms-attachments` in
    this example). If it already exists, reuse it.
 4. Leave the bucket private. Uploads and downloads go through your authenticated API.
-5. Run your upload or `npm run database:import` again.
 
 Docker Compose starts RustFS but does not create buckets. `S3_BUCKET` tells the
 CMS which bucket to use; the CMS does not create it automatically. A healthy
@@ -631,17 +479,17 @@ and font imports are not needed. No Tailwind configuration is required.
 
 ### 7. Start, sign in, and create a page
 
-With Docker services healthy, run these commands in two terminals from the root:
+After creating the bucket in step 3 and saving all the files above, run this
+command from the repository root:
 
 ```sh
-# Terminal 1
-npm run dev:api
+npm run dev
 ```
 
-```sh
-# Terminal 2
-npm run dev:admin
-```
+This waits for the Docker services to become healthy and starts both applications.
+Press Ctrl+C to stop the applications; use `npm run services:down` to stop Docker
+services. You can also run `npm run dev:api` and `npm run dev:admin` in separate
+terminals when debugging.
 
 Open **http://localhost:3001/admin**. Sign in with `ADMIN_BOOTSTRAP_EMAIL` and
 `ADMIN_BOOTSTRAP_PASSWORD` from `.env`. Create a page, enter a title, choose a status, select
@@ -662,7 +510,73 @@ one minute, wait a minute before retrying. If uploads return 503, check
 is occupied, change `DB_PORT` and recreate the Compose services. If you change
 `PORT`, update the Next.js rewrite destination too.
 
-### 8. Build and extend the starter
+### 8. Add maintenance commands and the project README
+
+Create `apps/api/src/cleanup.ts` for the root `storage:cleanup` command:
+
+```ts
+import "./env";
+import { NestFactory } from "@nestjs/core";
+import { AttachmentService } from "@nestjs-cms/core";
+import { AppModule } from "./app.module";
+
+async function main() {
+  const app = await NestFactory.createApplicationContext(AppModule);
+  try {
+    const result = await app.get(AttachmentService).cleanup();
+    console.log(result);
+    if (result.failures.length) process.exitCode = 1;
+  } finally {
+    await app.close();
+  }
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+```
+
+Run `npm run storage:cleanup` periodically to remove deleted/replaced attachments
+and abandoned uploads once eligible. Attachment deletion currently marks metadata
+as deleted; this command removes the stored files. It preserves active attachments
+and retains failed deletions for retry. In deployment, schedule it through your job
+runner; this starter does not install an automatic schedule.
+
+Create `README.md` in your new repository with these project instructions:
+
+```markdown
+# My CMS
+
+NestJS API in `apps/api`, Next.js admin in `apps/admin`, and local PostgreSQL
+and RustFS services in `docker-compose.yml`. Requires Node.js 22+, npm, and Docker
+with Compose supporting `--wait`.
+
+## First run
+
+1. Run `npm ci` from this directory.
+2. Create the root `.env` using your project's database, storage, and administrator
+   bootstrap settings. Obtain these settings from the project maintainer; secrets
+   are excluded from Git.
+3. Run `npm run services:up`.
+4. Open http://localhost:9001, sign in with the S3 credentials from `.env`, and
+   create the private bucket named by `S3_BUCKET` once per fresh storage volume.
+5. Run `npm run dev` and open http://localhost:3001/admin.
+6. Sign in with the bootstrap account. Remove the bootstrap email and password
+   from `.env` after the first successful API startup.
+
+## Commands
+
+- `npm run dev`: start infrastructure and both apps.
+- `npm run build`: build both apps.
+- `npm run typecheck:admin`: check admin TypeScript.
+- `npm run storage:cleanup`: remove eligible unused attachment files.
+- `npm run services:down`: stop infrastructure while keeping data.
+
+The API listens on port 3000; the admin listens on port 3001 and proxies API
+requests through `/admin/api`. Docker volumes retain accounts, content, and files.
+This is a local development setup; production requires HTTPS and database migrations.
+```
 
 Check and build both apps:
 
@@ -671,8 +585,9 @@ npm run typecheck:admin
 npm run build
 ```
 
-To smoke-test the compiled API locally, stop `dev:api` and run `npm run start:api`
-with `NODE_ENV=development`; keep `dev:admin` running. Use `start:admin` for the
+To smoke-test the compiled API locally, stop `npm run dev`, then run
+`npm run start:api` with `NODE_ENV=development` and `npm run dev:admin` in separate
+terminals. Use `start:admin` for the
 built frontend. A production deployment must use HTTPS and the settings below.
 
 Add more backend files in `apps/api/src/resources` and corresponding frontend
@@ -695,6 +610,177 @@ mappings, and deployment details, and [operations](docs/operations.md) for stora
 Stop infrastructure with `docker compose down`. Volumes preserve the database and
 attachments; `docker compose down -v` deletes both. Changing credentials in `.env`
 does not change the credentials already initialized in a PostgreSQL volume.
+
+## Backend-only quick start
+
+Requires Node.js 22+, npm, and a PostgreSQL database. The package supports NestJS 11 with the Express adapter.
+
+### 1. Create a NestJS project and install the package
+
+```sh
+npx @nestjs/cli@11 new nestjs-cms-demo --package-manager npm
+cd nestjs-cms-demo
+npm install @nestjs-cms/core
+```
+
+The npm package includes compiled JavaScript and TypeScript declarations. Imports use `"@nestjs-cms/core"`.
+
+The package includes Zod, TypeORM, PostgreSQL/MySQL drivers, dotenv, and the S3 client. The NestJS project supplies the NestJS runtime dependencies.
+
+### 2. Create a resource
+
+```sh
+mkdir -p src/resources
+```
+
+Create `src/resources/pages.ts`:
+
+```ts
+import { defineResource, z } from "@nestjs-cms/core";
+
+export default defineResource({
+  name: "pages",
+  schema: z
+    .object({
+      title: z.string().trim().min(1).max(200),
+      status: z.enum(["draft", "published"]).default("draft"),
+    })
+    .strict(),
+  columns: {
+    title: { type: String, length: 200 },
+    status: { type: String, length: 20 },
+  },
+  filterable: ["title", "status"],
+  sortable: ["title", "createdAt"],
+});
+```
+
+Keep the folder inside `src` so the standard Nest compiler builds it into `dist/resources`. Each additional resource requires only one new file in this folder. No resource index or per-resource registration is needed.
+
+### 3. Import the CMS module once
+
+Add `ResourceModule.forRoot(...)` to the `imports` array in `src/app.module.ts`:
+
+```ts
+import { Module } from "@nestjs/common";
+import { join } from "node:path";
+import { ResourceModule } from "@nestjs-cms/core";
+
+@Module({
+  imports: [
+    ResourceModule.forRoot({ resourcesPath: join(__dirname, "resources") }),
+  ],
+})
+export class AppModule {}
+```
+
+You can keep your existing controllers, providers, and other imports. The module's API-key guard and error filter apply only to CMS routes.
+
+### 4. Configure `.env`
+
+Create `.env` in the new project's root:
+
+```dotenv
+NODE_ENV=development
+PORT=3000
+DB_TYPE=postgres
+DB_HOST=127.0.0.1
+DB_PORT=5432
+DB_USERNAME=cms
+DB_PASSWORD=cms_dev_password
+DB_DATABASE=cms
+DB_SYNCHRONIZE=true
+ADMIN_API_KEY=
+CORS_ORIGINS=
+```
+
+Use credentials for an existing PostgreSQL database. The package loads `.env` automatically. With `DB_SYNCHRONIZE=true`, it creates the resource tables in that database during startup. Use migrations instead in production.
+
+If you need a local database and port 5432 is available:
+
+```sh
+docker run --name nestjs-cms-demo-postgres -d \
+  -e POSTGRES_USER=cms -e POSTGRES_PASSWORD=cms_dev_password -e POSTGRES_DB=cms \
+  -p 127.0.0.1:5432:5432 postgres:17-alpine
+```
+
+Wait for PostgreSQL to be ready before starting the application. The example above supports plain resource CRUD. **Attachments also require working S3/RustFS storage and an attachment field in the resource definition.**
+
+### 4a. Configure storage for attachments
+
+For existing MinIO data, follow the [storage migration instructions](docs/operations.md#migrating-existing-minio-storage) before switching services.
+
+For local RustFS, add these settings to your application's `.env`:
+
+```dotenv
+S3_REGION=us-east-1
+S3_BUCKET=cms-attachments
+S3_ENDPOINT=http://127.0.0.1:9000
+S3_FORCE_PATH_STYLE=true
+S3_ACCESS_KEY_ID=rustfsadmin
+S3_SECRET_ACCESS_KEY=rustfsadmin123
+ATTACHMENT_MAX_BYTES=20971520
+```
+
+These credentials match this library's development Compose setup. From the `nestjs-cms` repository checkout, start storage with:
+
+```sh
+docker compose up -d rustfs
+```
+
+Wait for RustFS to become healthy. Open http://localhost:9001, sign in with the configured S3 credentials, and create the private `cms-attachments` bucket once. The npm package does not start storage or include the Compose setup. You can also use an existing RustFS server: supply its endpoint and credentials and create the bucket beforehand. The endpoint above assumes the application runs on your host machine.
+
+For AWS S3 instead, use your bucket's region and name, omit `S3_ENDPOINT`, and set `S3_FORCE_PATH_STYLE=false`. Supply both credential variables, or omit both when using an IAM role. See [AWS S3 configuration](docs/operations.md#aws-s3-configuration) for permissions.
+
+In `src/resources/pages.ts`, add this property to the existing `defineResource({...})` object:
+
+```ts
+attachments: [
+  { field: "cover", mimeTypes: ["image/jpeg", "image/png", "image/webp"] },
+],
+```
+
+Attachment fields are declared separately from the Zod schema and database columns. After restarting the application and creating a page, upload a file using its record ID:
+
+```sh
+curl -X POST http://localhost:3000/api/pages/RECORD_ID/attachments/cover \
+  -F 'file=@/absolute/path/to/cover.png'
+```
+
+Replace `RECORD_ID` and the file path with your values. If `ADMIN_API_KEY` is configured, include the `X-API-Key` header. Uploads and downloads always pass through the backend attachment API; the browser never connects directly to S3/RustFS.
+
+Without working object storage, the application can start and plain resource CRUD still works. Storage is contacted when an attachment operation needs it: uploads fail with HTTP 503 (`Object storage upload unavailable`), and downloads of existing attachments fail with HTTP 503 (`Attachment content unavailable`). There is no local-filesystem fallback. Omitting the S3 settings does not disable attachments; the client uses the default region/bucket and AWS credential chain, which only works if that environment already has access to the matching storage.
+
+### 5. Start the application
+
+```sh
+npm run start:dev
+```
+
+```sh
+curl http://localhost:3000/api/_resources
+curl -X POST http://localhost:3000/api/pages \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"About us"}'
+curl http://localhost:3000/api/pages
+```
+
+After adding or removing resource files, rebuild/restart the application. The standard Nest CLI TypeScript build emits the resource files separately; bundlers require additional configuration to preserve those files for runtime discovery.
+
+For production, run the host project's `npm run build` and `npm run start:prod`, disable schema synchronization, and apply reviewed migrations. The library does not run or install its demo migrations in your application.
+
+### Optional: CORS and shutdown hooks
+
+Same-origin frontends do not require CORS. To apply `CORS_ORIGINS` for a separate frontend and enable graceful shutdown, call the helper in your application's existing `src/main.ts`:
+
+```ts
+import { configureCmsApp } from "@nestjs-cms/core";
+
+// After NestFactory.create(AppModule), before app.listen(...):
+configureCmsApp(app);
+```
+
+Set `CORS_ORIGINS=http://localhost:5173`, for example. Your host application still controls its listening port, bind address, and bootstrap process. If it already manages CORS and shutdown hooks, keep that configuration instead.
 
 ## Build your own CMS repository
 
@@ -945,14 +1031,14 @@ in `.env` does not update a PostgreSQL user already stored in a volume.
 
 ### Troubleshooting the workspace
 
-| Symptom                                     | Check                                                                                                       |
-| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| API cannot connect to PostgreSQL            | Check `docker compose ps`, `DB_PORT`, and root `.env` credentials.                                          |
-| Login fails on a fresh setup                | Check API startup logs, bootstrap password length, and whether the users table already contains an account. |
-| Login works but requests fail or return 403 | Use `http://localhost:3001/admin`, check `ADMIN_ORIGIN`, and verify the user's role permissions.            |
-| Attachments return 503                      | Check RustFS health, RustFS logs and bucket existence, and the API's S3 endpoint, credentials, and bucket.  |
+| Symptom                                            | Check                                                                                                                                                                                     |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| API cannot connect to PostgreSQL                   | Check `docker compose ps`, `DB_PORT`, and root `.env` credentials.                                                                                                                        |
+| Login fails on a fresh setup                       | Check API startup logs, bootstrap password length, and whether the users table already contains an account.                                                                               |
+| Login works but requests fail or return 403        | Use `http://localhost:3001/admin`, check `ADMIN_ORIGIN`, and verify the user's role permissions.                                                                                          |
+| Attachments return 503                             | Check RustFS health, RustFS logs and bucket existence, and the API's S3 endpoint, credentials, and bucket.                                                                                |
 | Attachment import reports `Storage staging failed` | Verify the private bucket named by `S3_BUCKET` exists in the RustFS console, then check the endpoint, credentials, and attachment database schema. Rerun the import after fixing storage. |
-| A new resource or section is missing        | Restart the API for resource discovery; import the frontend section and add it to `sections`.               |
+| A new resource or section is missing               | Restart the API for resource discovery; import the frontend section and add it to `sections`.                                                                                             |
 
 ## Migrating from `nestjs-cms`
 
