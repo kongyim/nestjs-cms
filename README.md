@@ -359,10 +359,26 @@ docker compose ps -a
 docker compose logs rustfs
 ```
 
-Continue when PostgreSQL and RustFS are healthy. Open http://localhost:9001,
-sign in with your S3 credentials, and create the bucket named by `S3_BUCKET`,
-leaving it private. This is a one-time step for a new storage volume. Uploads and
-downloads go through your authenticated API.
+Continue when PostgreSQL and RustFS are healthy, then create the attachment bucket
+before uploading files or running a spreadsheet import that includes attachments:
+
+1. Open http://localhost:9001 (the RustFS console).
+2. Sign in using `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` from your `.env`.
+3. Create a bucket whose name exactly matches `S3_BUCKET` (`cms-attachments` in
+   this example). If it already exists, reuse it.
+4. Leave the bucket private. Uploads and downloads go through your authenticated API.
+5. Run your upload or `npm run database:import` again.
+
+Docker Compose starts RustFS but does not create buckets. `S3_BUCKET` tells the
+CMS which bucket to use; the CMS does not create it automatically. A healthy
+RustFS container therefore does not mean the attachment bucket exists. This is a
+one-time step per storage volume; repeat it after deleting or replacing the volume
+(for example, with `docker compose down -v`). Switching from MinIO to a fresh
+RustFS volume also requires bucket setup and migration of any existing files.
+
+A missing bucket can cause `Storage staging failed` during an attachment import,
+even when the database and RustFS are healthy. A dry run does not upload files,
+so it does not verify that the bucket exists or that storage writes succeed.
 
 There is no pgAdmin service. You can inspect the database using
 `docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'`.
@@ -935,6 +951,7 @@ in `.env` does not update a PostgreSQL user already stored in a volume.
 | Login fails on a fresh setup                | Check API startup logs, bootstrap password length, and whether the users table already contains an account. |
 | Login works but requests fail or return 403 | Use `http://localhost:3001/admin`, check `ADMIN_ORIGIN`, and verify the user's role permissions.            |
 | Attachments return 503                      | Check RustFS health, RustFS logs and bucket existence, and the API's S3 endpoint, credentials, and bucket.  |
+| Attachment import reports `Storage staging failed` | Verify the private bucket named by `S3_BUCKET` exists in the RustFS console, then check the endpoint, credentials, and attachment database schema. Rerun the import after fixing storage. |
 | A new resource or section is missing        | Restart the API for resource discovery; import the frontend section and add it to `sections`.               |
 
 ## Migrating from `nestjs-cms`
