@@ -14,6 +14,39 @@ React 19 and React DOM 19 are peers; Material UI and Emotion are installed with
 the package. There is no runtime dependency on Next.js or Tailwind. Compiled
 styles are included.
 
+## Recommended sections folder
+
+When building an admin application, including with Codex or another AI coding
+agent, follow the `nestjs-cms-demo` layout. Keep all admin section definitions in
+`apps/admin/src/sections/` (`src/sections/` in a standalone application):
+
+```text
+sections
+├── auth-extensions.ts
+├── categories.ts
+├── dashboard.ts
+└── pages.ts
+```
+
+- `categories.ts` and `pages.ts` each default-export a `defineSection(...)`
+  definition for the matching backend resource.
+- `dashboard.ts` default-exports a `defineCustomSection(...)` definition that
+  imports its React component from `../components/dashboard`.
+- `auth-extensions.ts` default-exports an `AuthSectionExtensions` configuration
+  for extra user and role fields. Pass it as the second argument to
+  `createAuthSections(permissions, authExtensions)` to extend the built-in editors.
+
+Add one file per new section. Keep `src/admin.config.ts` as the composition point:
+import section definitions from `./sections/` and register them in the `sections`
+array in navigation order, followed by the built-in auth sections as needed.
+Sections are registered explicitly; they are not discovered from the folder.
+Keep the configuration within the `'use client'` boundary.
+
+Backend resource definitions belong in `apps/api/src/resources/`. Match resource
+section keys, fields, and permissions to those backend definitions. See
+[custom pages](#custom-pages) and [built-in user and role editors](#built-in-user-and-role-editors)
+for additional configuration examples.
+
 ## Quick start: a new Next.js application
 
 This example creates a Next.js 15 App Router application with one **Pages** section.
@@ -38,14 +71,12 @@ React 19 and React DOM 19, which this Next.js App Router setup uses.
 
 ### 2. Configure one resource
 
-Create `src/admin.config.ts`:
+Create `src/sections/pages.ts`:
 
 ```ts
-'use client';
+import { defineSection } from '@nestjs-cms/admin';
 
-import { defineAdmin, defineSection } from '@nestjs-cms/admin';
-
-const pages = defineSection({
+export default defineSection({
   key: 'pages',
   label: 'Pages',
   singular: 'page',
@@ -57,6 +88,15 @@ const pages = defineSection({
     { field: 'title', label: 'Title', type: 'text', required: true },
   ],
 });
+```
+
+Create `src/admin.config.ts` and register the section:
+
+```ts
+'use client';
+
+import { defineAdmin } from '@nestjs-cms/admin';
+import pages from './sections/pages';
 
 export default defineAdmin({
   title: 'My Admin',
