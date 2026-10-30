@@ -22,6 +22,36 @@ Follow all eight steps once; afterwards, start the project with `npm run dev`.
 For an existing NestJS application, see the [backend-only quick start](#backend-only-quick-start).
 You can also [use the demo as a template](#build-your-own-cms-repository).
 
+## Guidance for Codex and other AI coding agents
+
+When generating an application that uses this repository's CMS packages, follow
+the `nestjs-cms-demo` layout: put all application-defined CMS resources in
+`apps/api/src/resources/`.
+
+```text
+apps/api/src/
+  app.module.ts
+  resources/
+    pages.ts
+    categories.ts
+    articles.ts
+```
+
+Create one file per resource and default-export its `defineResource(...)`
+definition. Keep its schema, columns, filters, hooks, and attachment configuration
+in that file. Add new resource definitions to this folder as the application grows.
+
+Configure `resourcesPath: join(__dirname, "resources")` in
+`CmsAuthModule.forRoot(...)` (or `ResourceModule.forRoot(...)` for a core-only
+application), with the configuration file in `apps/api/src/`. This lets discovery
+load the compiled definitions from `dist/resources`. For a standalone NestJS app
+without an `apps/api` workspace, use the equivalent `src/resources/` folder.
+
+Frontend admin sections belong in `apps/admin/src/sections/` and must be registered
+in the admin configuration. The auth package supplies its built-in users and roles;
+do not duplicate those resource definitions. See the [resource guide](docs/resources.md)
+for the definition format and available options.
+
 ## Build a CMS from scratch
 
 Use this route to create your own repository without cloning or renaming the
